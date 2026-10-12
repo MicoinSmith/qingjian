@@ -12,7 +12,7 @@ use objc2_input_method_kit::{IMKInputController, IMKServer};
 use qingjian_core::{Candidate, QUESTION_PREFIX};
 use qingjian_platform::Modifiers;
 
-use super::{TextClient, catch_panic, modifiers, recover_from_panic, secure_input};
+use super::{TextClient, catch_panic, recover_from_panic, secure_input};
 use crate::candidates::Preedit;
 use crate::host;
 use crate::menubar;
@@ -24,7 +24,7 @@ mod display;
 mod text;
 mod translate;
 
-pub use click::click;
+pub use click::{click, commit_raw_after_switch};
 
 define_class!(
     // SAFETY:
@@ -103,7 +103,9 @@ define_class!(
                     h.engine.set_application(bundle);
                     h.refresh_text_replacements();
                     h.reload_config_if_changed();
-                    h.indicator.activate();
+                    h.mode_switch.set_active(true);
+                    let english = h.english_mode();
+                    h.indicator.activate(english);
                     h.watch.start();
                 });
             });
@@ -141,6 +143,8 @@ define_class!(
                     h.window.hide();
                     h.indicator.deactivate();
                     h.watch.stop();
+                    h.mode_switch.set_active(false);
+                    h.forget_osd_state();
                     h.engine.break_chain();
                     h.engine.flush_learning();
                     h.last_flush = std::time::Instant::now();
@@ -152,6 +156,8 @@ define_class!(
                 host::with(|h| {
                     h.indicator.deactivate();
                     h.watch.stop();
+                    h.mode_switch.set_active(false);
+                    h.forget_osd_state();
                     h.engine.flush_learning();
                 });
             }
@@ -215,6 +221,8 @@ impl QingjianInputController {
             control,
             command,
         };
+        // 任一普通键按下都作废待定的「单击 Shift」（Shift + 字母不该被当成单击）
+        host::with(|h| h.note_key(key));
         // 提示在显示：敲任何键先收掉，键照常处理
         host::with(|h| h.clear_notice());
         // 翻译选中文字进行中：回车 / 空格 / 1 接受，Esc 放弃，其他键放弃后照常交给应用

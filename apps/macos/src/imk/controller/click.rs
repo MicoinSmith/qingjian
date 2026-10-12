@@ -25,6 +25,36 @@ pub fn click(target: HitTarget) {
     }
 }
 
+/// 单击 Shift 切到英文之后：组句中的拼音原样当英文上屏（像搜狗），候选窗口一并收掉。
+///
+/// 定时器回调里调，所以要分两次借 Host：`commit_raw` 内部还会借一次。没在组句、或不在英文模式时什么都不做。
+pub fn commit_raw_after_switch() {
+    let commit = crate::host::with(|h| h.english_mode() && !h.engine.composition().is_empty())
+        .unwrap_or(false);
+    if !commit {
+        return;
+    }
+    tracing::debug!("切到英文：拼音原样上屏");
+    with_active(|controller, client| {
+        controller.commit_raw(client);
+    });
+}
+
+/// 在当前激活的会话上执行一次「用客户端做事」的操作（定时器这类非按键回调用）。
+/// 没有激活的会话、或拿不到文本客户端时直接跳过。
+fn with_active(f: impl FnOnce(&QingjianInputController, TextClient<'_>)) {
+    let Some(controller) = ACTIVE.with(|active| active.borrow().clone()) else {
+        tracing::debug!("没有激活的会话，跳过");
+        return;
+    };
+    // SAFETY: 同 `click`：IMKInputController 的 `client` 返回当前会话的文本客户端，可能为 nil
+    let client: Option<Retained<AnyObject>> = unsafe { msg_send![&*controller, client] };
+    let Some(client) = client else {
+        return;
+    };
+    f(&controller, TextClient::new(&client));
+}
+
 impl QingjianInputController {
     pub(super) fn set_active(&self) {
         ACTIVE.with(|active| *active.borrow_mut() = Some(self.retain()));

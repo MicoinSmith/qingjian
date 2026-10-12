@@ -122,6 +122,8 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
     let preferences = PreferencesWindow::new(mtm, &languages, version, &info.build);
     let monitor = PredictMonitor::new(mtm);
     let watch = ConfigWatch::new(mtm);
+    let mode_switch = ModeSwitch::new(mtm);
+    let osd = ModeOsd::new(mtm);
     HOST.with(|host| {
         *host.borrow_mut() = Some(Host {
             engine,
@@ -131,6 +133,10 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
             preferences,
             settings,
             watch,
+            mode_switch,
+            osd,
+            last_osd_english: None,
+            last_osd_caps: None,
             themes: qingjian_render::ThemeLibrary::load(paths::themes_dir().as_deref()),
             last_flush: std::time::Instant::now(),
             applied_predict: PredictConfig::default(),

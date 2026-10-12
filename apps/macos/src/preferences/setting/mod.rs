@@ -149,6 +149,9 @@ pub enum Setting {
     /// `[general] shift_letter`，勾选框：中文模式下 Shift+字母进组句（勾上是 compose，否则 passthrough）。
     ShiftLetter,
 
+    /// `[shortcut] switch_mode` 里的 `shift`，勾选框：单击 Shift 切中英文（此时 Caps Lock 只管大小写）。
+    SwitchModeShift,
+
     /// `[shortcut] translation`，快捷键录制按钮（只记修饰键）。
     TranslationKeys,
 
@@ -244,6 +247,7 @@ impl Setting {
             Self::Emoji => 62,
             Self::EnglishInChinese => 63,
             Self::ShiftLetter => 50,
+            Self::SwitchModeShift => 65,
             Self::Theme => 51,
             Self::HorizontalGrid => 57,
             Self::CandidateFontSize => 58,
@@ -319,6 +323,7 @@ impl Setting {
             62 => Self::Emoji,
             63 => Self::EnglishInChinese,
             50 => Self::ShiftLetter,
+            65 => Self::SwitchModeShift,
             51 => Self::Theme,
             57 => Self::HorizontalGrid,
             58 => Self::CandidateFontSize,
@@ -428,6 +433,7 @@ mod tests {
             Setting::InputLog,
             Setting::SystemTextReplacements,
             Setting::ShiftLetter,
+            Setting::SwitchModeShift,
             Setting::HorizontalGrid,
             Setting::CandidateFontSize,
             Setting::AnnotationFontSize,
