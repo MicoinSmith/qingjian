@@ -240,6 +240,7 @@ P2C 自由生成实验：`--eval-text <集> --eval-generate data/models/hanzhang
 IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences` 分目录。
 
 - 输入法菜单（状态项 + 系统输入源菜单）与偏好设置窗口都是配置文件的前端：只写 `config.toml`，`Host::apply_config` 一条通路热加载，激活期间每秒看一次文件 mtime。
+  翻页键（`[general] page_keys`）走 `Session::page_target` / `can_turn_page`：选 `-=` 时 `-` / `=` **没有上一页 / 下一页就落回原语义**（英文直输段），别的翻页键翻不动照旧吃键（`imk/controller/display.rs::page_key`）。Windows / Linux 还是老行为，尚未同步。
   输入方案（`[general] scheme`）也在这里装配：双拼 / 注音设给引擎，形码额外按 `paths::code_table_path()` 挂码表
   （用户目录 `wubi/wubi86.tsv` 优先，包里 `Resources/wubi/` 兜底；找不到只警告并按拼音跑）。
 - `apps/macos/scripts/bundle.sh --install` 打包安装到 `~/Library/Input Methods/`（开发用），`--pkg` 做分发用的 pkg（装 `/Library/Input Methods/`，postinstall 跑 `qingjian-macos --register`
