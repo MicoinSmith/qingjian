@@ -6,8 +6,8 @@
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{define_class, msg_send, sel};
-use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType, NSMenu};
-use objc2_foundation::NSObjectProtocol;
+use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSMenu};
+use objc2_foundation::{NSObjectProtocol, NSUInteger};
 use objc2_input_method_kit::{IMKInputController, IMKServer};
 use qingjian_core::{Candidate, QUESTION_PREFIX};
 use qingjian_platform::Modifiers;
@@ -24,7 +24,7 @@ mod display;
 mod text;
 mod translate;
 
-pub use click::{click, commit_raw_after_switch};
+pub use click::click;
 
 define_class!(
     // SAFETY:
@@ -71,6 +71,13 @@ define_class!(
             }
         }
 
+        /// 声明要收的事件种类。父类缺省只回 `NSKeyDownMask`（Apple 文档原文），所以修饰键事件一直收不到，
+        /// Shift 的按下 / 抬起只能靠轮询采样（见 `host/mode_switch.rs`）；补上 flagsChanged 才有精确边沿。
+        #[unsafe(method(recognizedEvents:))]
+        fn recognized_events(&self, _sender: Option<&AnyObject>) -> NSUInteger {
+            (NSEventMask::KeyDown.0 | NSEventMask::FlagsChanged.0) as NSUInteger
+        }
+
         /// 应用要求立刻结束本次输入（切换焦点、切换输入法等）。
         #[unsafe(method(commitComposition:))]
         fn commit_composition(&self, client: Option<&AnyObject>) {
@@ -103,7 +110,7 @@ define_class!(
                     h.engine.set_application(bundle);
                     h.refresh_text_replacements();
                     h.reload_config_if_changed();
-                    h.mode_switch.set_active(true);
+                    h.mode_switch.reset();
                     let english = h.english_mode();
                     h.indicator.activate(english);
                     h.watch.start();
@@ -143,7 +150,7 @@ define_class!(
                     h.window.hide();
                     h.indicator.deactivate();
                     h.watch.stop();
-                    h.mode_switch.set_active(false);
+                    h.mode_switch.reset();
                     h.forget_osd_state();
                     h.engine.break_chain();
                     h.engine.flush_learning();
@@ -156,7 +163,7 @@ define_class!(
                 host::with(|h| {
                     h.indicator.deactivate();
                     h.watch.stop();
-                    h.mode_switch.set_active(false);
+                    h.mode_switch.reset();
                     h.forget_osd_state();
                     h.engine.flush_learning();
                 });
@@ -202,8 +209,26 @@ impl QingjianInputController {
         host::with(|h| h.engine.application() == Some(LOGIN_WINDOW)).unwrap_or(false)
     }
 
+    /// 修饰键事件：Shift 按下 / 抬起交给 [`Host::shift_event`] 判定单击；切到英文时把组句里的拼音原样上屏
+    /// （要借文本客户端，所以放在 Host 借用之外，同定时器那条路）。
+    fn handle_shift_event(&self, event: &NSEvent) {
+        let key = event.keyCode();
+        let down = event.modifierFlags().contains(NSEventModifierFlags::Shift);
+        if host::with(|h| h.shift_event(key, down)).unwrap_or(false) {
+            click::commit_raw_after_switch();
+        }
+    }
+
     /// 一个按键事件的分发：只管按下；Cmd / Ctrl 组合除 Cmd+左右外一律交给应用；命令键映射成选择器；其余按字符当文本。
     fn dispatch_event(&self, event: &NSEvent, client: TextClient<'_>) -> bool {
+        // 修饰键事件（`recognizedEvents:` 声明了 flagsChanged 才有）：Shift 的按下 / 抬起在这里，
+        // 是精确边沿。事件本身继续照常交给系统，不吞。
+        if event.r#type() == NSEventType::FlagsChanged {
+            if !self.in_login_window() {
+                self.handle_shift_event(event);
+            }
+            return false;
+        }
         if event.r#type() != NSEventType::KeyDown || self.in_login_window() {
             return false;
         }

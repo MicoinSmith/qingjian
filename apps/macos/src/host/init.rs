@@ -122,7 +122,7 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
     let preferences = PreferencesWindow::new(mtm, &languages, version, &info.build);
     let monitor = PredictMonitor::new(mtm);
     let watch = ConfigWatch::new(mtm);
-    let mode_switch = ModeSwitch::new(mtm);
+    let mode_switch = ModeSwitch::default();
     let osd = ModeOsd::new(mtm);
     HOST.with(|host| {
         *host.borrow_mut() = Some(Host {
