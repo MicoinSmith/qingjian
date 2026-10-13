@@ -119,6 +119,22 @@ pub(crate) fn view(settings: &Settings, context: &mut ViewContext<Settings>) -> 
                 .on_selection_changed(context.callback(Message::Emoji)),
         ),
         field(
+            "候选后面的颜文字",
+            "有对应颜文字的词后面跟一个（ku → 哭 (T_T)），这里限一次最多几个。",
+            ComboBox::new()
+                .items_source(EmojiCount::LABELS.iter().copied())
+                .selected_index(Some(usize::from(g.kaomoji.get())))
+                .on_selection_changed(context.callback(Message::Kaomoji)),
+        ),
+        field(
+            "候选后面的符号",
+            "有对应符号的词后面跟一两个（yuedengyu → 约等于 ≈，alpha → α），这里限一次最多几个。",
+            ComboBox::new()
+                .items_source(EmojiCount::LABELS.iter().copied())
+                .selected_index(Some(usize::from(g.symbols.get())))
+                .on_selection_changed(context.callback(Message::Symbols)),
+        ),
+        field(
             "中文模式标点转全角",
             "没在打拼音时敲 , . ? ! 等出「，。？！」，数字后面的点保持半角；悬浮状态条的「，。」格也能切，切的是当前模式那份。",
             ToggleSwitch::new()

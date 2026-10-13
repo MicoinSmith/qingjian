@@ -116,6 +116,8 @@
   - [~] **⑤ 任务栏点中/英反同步**（★☆☆ / 低 / 0.5 天）：**代码完成，待真机测**（2026-09-11）。
     激活时对转换模式 compartment 挂 `ITfCompartmentEventSink`（`com/conversion.rs`），`OnChange` 读回 `NATIVE` 位、与当前模式不同才翻转
     （防回环），顺带刷指示器 + 上报 Server 让悬浮状态条也同步。纯 DLL 改动、无新协议。
+  - [ ] **符号面板**：Core 已有（`Engine::open_symbol_panel`、`SymbolPanel`），用 qingjian-render 画；macOS 的按键（高亮在第一个时 ↑ 打开、Tab / `[` `]` 换组换类）、
+    鼠标（双击上屏、滚轮滚动、✕ 关闭、点标签切换）照搬。入口同时加在悬浮状态条与托盘中 / 英图标的右键菜单（mac 在输入法菜单的「符号面板…」）。
   - [ ] 发版：换 **Certum 开源代码签名证书**重签（开发全程自签 + 本机受信任根，见 `installer/sign-local.ps1`）、
     `windows-v<版本>` 标签与 CI。
   - [ ] **本地整句模型上 Windows**：Server 已接（`dispatch/rescore/`，CPU 推理，设置「云服务」页有开关，安装包带 `data\model`），待真机验：每次重排的耗时（前文 + 几条路径一次前向，CPU 上可能几十到一百多毫秒，超了就缩前文长度）、模型加载时间；

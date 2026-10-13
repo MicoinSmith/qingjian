@@ -74,6 +74,12 @@ impl Session {
         self.land(moved)
     }
 
+    /// 符号面板换上一个分类：每行 `columns` 格，直接展开成矩阵，高亮在第一格。
+    pub fn open_panel(&mut self, items: Vec<Candidate>, columns: usize) {
+        self.reset(None, items, columns, 0);
+        self.grid = Some(Grid::at(&self.layout, 0));
+    }
+
     /// 收回单行，高亮留在原处。返回原来是不是展开着。
     pub fn collapse(&mut self) -> bool {
         self.grid.take().is_some()
@@ -90,6 +96,24 @@ impl Session {
             cells.extend(page);
         }
         Some((cells, columns))
+    }
+
+    /// 视口滚 `delta` 行（面板里的滚轮），高亮滚出去时跟进视口。返回要不要重画。
+    pub fn scroll_rows(&mut self, delta: isize) -> bool {
+        let Some(mut grid) = self.grid else {
+            return false;
+        };
+        let moved = grid.scroll(&self.layout, self.highlighted, delta);
+        self.grid = Some(grid);
+        self.land(moved)
+    }
+
+    /// 把高亮挪到 `index`（点面板格子）。返回动没动。
+    pub fn select(&mut self, index: usize) -> bool {
+        if index == self.highlighted || self.layout.candidate(index).is_none() {
+            return false;
+        }
+        self.land(Some(index))
     }
 
     /// 高亮落到 `index`（`None` 是没动），页号跟着走。

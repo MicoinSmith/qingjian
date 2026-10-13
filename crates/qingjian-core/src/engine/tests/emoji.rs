@@ -106,3 +106,53 @@ fn emoji_follow_their_word_and_consume_its_syllables() {
     assert_eq!(engine.commit(&emoji), "👨‍💻");
     assert_eq!(engine.composition().text(), "zhe");
 }
+
+#[test]
+fn kaomoji_and_symbols_follow_the_emoji_of_their_word_with_their_own_limits() {
+    let dictionary = Dictionary::parse("约等于\tyue deng yu\t100\n哭\tku\t100\n").unwrap();
+    let table = EmojiTable::parse("约等于\t≈\n").unwrap();
+    let mut engine = Engine::new(dictionary).with_emoji(table);
+    // CLDR 表里的普通符号筛掉，改由符号表出
+    engine.set_input("yuedengyu");
+    let items = engine.query().unwrap().candidates.items;
+    let position = items.iter().position(|c| c.text == "约等于").unwrap();
+    assert_eq!(items[position + 1].text, "≈");
+    assert_eq!(items[position + 1].kind, CandidateKind::Symbol);
+    assert!(items.iter().all(|c| c.kind != CandidateKind::Emoji));
+    engine.set_symbol_limit(0);
+    let items = engine.query().unwrap().candidates.items;
+    assert!(items.iter().all(|c| !c.kind.follows_word()));
+
+    engine.set_input("ku");
+    let items = engine.query().unwrap().candidates.items;
+    let ku = items.iter().position(|c| c.text == "哭").unwrap();
+    let kaomoji = items[ku + 1..]
+        .iter()
+        .find(|c| c.kind == CandidateKind::Kaomoji)
+        .unwrap();
+    assert_eq!(kaomoji.text, "(T_T)");
+    assert_eq!(kaomoji.reading.as_deref(), Some("哭"));
+    let kaomoji = kaomoji.clone();
+    engine.set_kaomoji_limit(0);
+    assert!(
+        engine
+            .query()
+            .unwrap()
+            .candidates
+            .items
+            .iter()
+            .all(|c| c.kind != CandidateKind::Kaomoji)
+    );
+    assert_eq!(engine.commit(&kaomoji), "(T_T)");
+    assert!(engine.composition().is_empty());
+}
+
+#[test]
+fn symbol_names_missing_from_the_dictionary_still_bring_their_symbols() {
+    let mut engine = engine().with_emoji(EmojiTable::default());
+    engine.set_input("jiankuohao");
+    let items = engine.query().unwrap().candidates.items;
+    assert_eq!(items[0].text, "尖括号");
+    assert_eq!(items[1].text, "〈〉");
+    assert_eq!(items[1].kind, CandidateKind::Symbol);
+}

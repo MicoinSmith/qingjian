@@ -13,6 +13,7 @@ pub mod engine;
 pub mod english;
 pub mod fuzzy;
 pub mod history;
+pub mod panel;
 pub mod parser;
 pub mod punctuation;
 pub mod ranking;
@@ -44,6 +45,7 @@ pub use engine::{
 };
 pub use fuzzy::FuzzyRules;
 pub use history::InputHistory;
+pub use panel::{PanelGroup, PanelSection, SymbolPanel};
 pub use parser::{ParseError, Segmentation};
 pub use punctuation::Punctuation;
 pub use qingjian_dictionary as dictionary;

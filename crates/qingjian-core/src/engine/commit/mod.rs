@@ -82,6 +82,7 @@ impl Engine {
     /// 候选的最后一个音节比输入长时（`kaif` 选了 开发），把输入吃完。
     /// 开了自动空格（[`Self::set_auto_space`]）时与上文、候选内部的中西文交界都补好空格。
     pub fn commit(&mut self, candidate: &Candidate) -> String {
+        self.panel = None;
         let lead = self.auto_space_before(&candidate.text);
         let text = self.commit_with(candidate, InputSource::from(candidate.kind), None);
         if lead { format!(" {text}") } else { text }
@@ -132,14 +133,16 @@ impl Engine {
                 self.learner.record_choice(&input, &candidate.text);
                 (consumed, input)
             }
-            // 英文词带出的 emoji 没有音节，和英文词一样对应整段作用域
-            CandidateKind::Emoji if candidate.syllables.is_empty() => self.whole_scope(),
+            // 英文词带出的 emoji、颜文字、符号没有音节，和英文词一样对应整段作用域
+            kind if kind.follows_word() && candidate.syllables.is_empty() => self.whole_scope(),
             CandidateKind::Sentence => {
                 typos = self.accepted_typos(candidate);
                 self.consumed_by(candidate)
             }
-            // emoji 按它对应词的音节消耗拼音，不记学习
-            CandidateKind::Emoji => self.consumed_by(candidate),
+            // emoji、颜文字、符号按它对应词的音节消耗拼音，不记学习
+            CandidateKind::Emoji | CandidateKind::Kaomoji | CandidateKind::Symbol => {
+                self.consumed_by(candidate)
+            }
             // 云端词是针对整段作用域要的（拼音可能有错，按音节对不上），上屏吃掉整段；词库里没有的记成用户词
             CandidateKind::Cloud => {
                 if let Some(syllables) = self.learned_syllables(candidate) {
@@ -256,6 +259,8 @@ impl Engine {
             | CandidateKind::Shortcut
             | CandidateKind::Custom(_)
             | CandidateKind::Emoji
+            | CandidateKind::Kaomoji
+            | CandidateKind::Symbol
             | CandidateKind::Generated => self.chain.reset(),
         }
         // 一次整句上屏里的几个词不算分段选，只有这段拼音经过至少两次上屏才合起来看

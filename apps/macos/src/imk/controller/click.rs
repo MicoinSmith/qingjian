@@ -7,6 +7,8 @@ use std::cell::RefCell;
 use objc2::Message;
 use qingjian_render::HitTarget;
 
+use crate::candidates::PanelMouse;
+
 use super::*;
 
 thread_local! {
@@ -27,7 +29,8 @@ pub fn click(target: HitTarget) {
 
 /// 单击 Shift 切到英文之后：组句中的拼音原样当英文上屏（像搜狗），候选窗口一并收掉。
 ///
-/// 定时器回调里调，所以要分两次借 Host：`commit_raw` 内部还会借一次。没在组句、或不在英文模式时什么都不做。
+/// 修饰键事件回调里调（`imk/controller/mod.rs` 的 `handle_shift_event`），要借文本客户端，所以放在 Host 借用之外；
+/// 没在组句、或不在英文模式时什么都不做。
 pub fn commit_raw_after_switch() {
     let commit = crate::host::with(|h| h.english_mode() && !h.engine.composition().is_empty())
         .unwrap_or(false);
@@ -40,7 +43,26 @@ pub fn commit_raw_after_switch() {
     });
 }
 
-/// 在当前激活的会话上执行一次「用客户端做事」的操作（定时器这类非按键回调用）。
+/// 符号面板的点击回调（host 建窗口时注册）。
+pub fn panel_mouse(hit: PanelMouse) {
+    let Some(controller) = ACTIVE.with(|active| active.borrow().clone()) else {
+        return;
+    };
+    // SAFETY: IMKInputController 的 `client` 返回当前会话的文本客户端（实现 IMKTextInput 的代理），可能为 nil
+    let client: Option<Retained<AnyObject>> = unsafe { msg_send![&*controller, client] };
+    let Some(client) = client else {
+        return;
+    };
+    if catch_panic("panel_click", || {
+        controller.panel_mouse_event(hit, TextClient::new(&client))
+    })
+    .is_none()
+    {
+        recover_from_panic(None);
+    }
+}
+
+/// 在当前激活的会话上执行一次「用客户端做事」的操作。
 /// 没有激活的会话、或拿不到文本客户端时直接跳过。
 fn with_active(f: impl FnOnce(&QingjianInputController, TextClient<'_>)) {
     let Some(controller) = ACTIVE.with(|active| active.borrow().clone()) else {

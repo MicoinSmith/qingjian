@@ -228,6 +228,8 @@ fn main() {
     engine.set_aux_show(config.general.aux_code_show);
     engine.set_chinese_first(config.general.chinese_first);
     engine.set_emoji_limit(usize::from(config.general.emoji.get()));
+    engine.set_kaomoji_limit(usize::from(config.general.kaomoji.get()));
+    engine.set_symbol_limit(usize::from(config.general.symbols.get()));
     engine.set_english_in_chinese(config.general.english_in_chinese);
     engine.set_shift_letter_compose(config.general.shift_letter.compose());
     engine.set_shuangpin_raw_preedit(config.general.shuangpin_raw_preedit);

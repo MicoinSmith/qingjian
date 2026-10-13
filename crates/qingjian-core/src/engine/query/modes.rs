@@ -97,7 +97,7 @@ impl Engine {
         })
         .collect();
         self.insert_emoji(&mut items);
-        items.sort_by_key(|c| c.kind == CandidateKind::Emoji);
+        items.sort_by_key(|c| c.kind.follows_word());
         Query {
             segmentations: Vec::new(),
             candidates: CandidateList { items },

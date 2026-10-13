@@ -10,6 +10,7 @@ mod emoji;
 mod english;
 mod learning;
 mod lookup;
+mod panel;
 mod privacy;
 mod raw;
 mod shuangpin;

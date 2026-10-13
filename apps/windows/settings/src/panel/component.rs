@@ -67,6 +67,12 @@ impl Component for Settings {
             Message::Emoji(Some(count)) if count <= usize::from(EmojiCount::MAX) => {
                 self.save("general", "emoji", count as i64);
             }
+            Message::Kaomoji(Some(count)) if count <= usize::from(EmojiCount::MAX) => {
+                self.save("general", "kaomoji", count as i64);
+            }
+            Message::Symbols(Some(count)) if count <= usize::from(EmojiCount::MAX) => {
+                self.save("general", "symbols", count as i64);
+            }
             Message::EnglishCandidates(on) => self.save("general", "english_candidates", on),
             Message::EnglishInChinese(on) => self.save("general", "english_in_chinese", on),
             Message::ChineseFirst(on) => self.save("general", "chinese_first", on),

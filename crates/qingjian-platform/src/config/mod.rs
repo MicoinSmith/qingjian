@@ -250,6 +250,10 @@ chinese_first = false
 english_in_chinese = true
 # 候选后面一次最多配几个 emoji（kaixin → 开心 😄），0–3；0 时候选里只有字词
 emoji = 3
+# 候选后面一次最多配几个颜文字（ku → 哭 (T_T)），0–3
+kaomoji = 1
+# 候选后面一次最多配几个符号（yuedengyu → 约等于 ≈，alpha → α），0–3
+symbols = 1
 # 中西文之间自动补空格：汉字与半角字母 / 数字相邻时补一个空格，「用Go写了30行」上屏成「用 Go 写了 30 行」。缺省关；只有 macOS 用
 auto_space = false
 # 中文模式下按住 Shift 敲的字母：passthrough 拼音原样上屏、字母交给应用（缺省，与以前一致）/ compose 收进组句

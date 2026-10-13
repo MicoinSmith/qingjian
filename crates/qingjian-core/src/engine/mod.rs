@@ -16,6 +16,7 @@ mod input_log;
 mod learning;
 mod marked;
 mod mode_keys;
+mod panel;
 mod prediction;
 mod privacy;
 mod query;
@@ -69,6 +70,7 @@ use crate::emoji::EmojiTable;
 use crate::english;
 use crate::fuzzy::{Expanded, FuzzyRules};
 use crate::history::InputHistory;
+use crate::panel::SymbolPanel;
 use crate::parser::{self, ParseError, Segmentation};
 use crate::punctuation::Punctuation;
 use crate::ranking::{self, Scored};
@@ -93,6 +95,9 @@ pub struct Engine {
     /// 附加词库（领域词库、用户导入的），与主词库一起查词、一起进整句词图；不参与语言模型（它们没有 bigram，
     /// 走词频兜底）。壳按用户目录 `dicts/` 与配置 `[dictionaries]` 装配。
     extra_dictionaries: Vec<Dictionary>,
+
+    /// 内置的符号、emoji 名字（尖括号、笑死），带上 emoji 表时启用：词库里没有它们，不收就打不出这个词、也就配不上符号。
+    companion_words: Option<&'static Dictionary>,
 
     /// 英文候选的释义（英→中），缺省为 [`NoTranslator`]。英文候选的辅助语言是主语言中文，
     /// 与中文候选查学习语言的表分开，仍是「一个候选只显示一种辅助语言」。
@@ -268,6 +273,21 @@ pub struct Engine {
     /// 每次查询最多插几个 emoji（配置 `[general] emoji`，缺省 3）；0 不出 emoji，表照样加载。
     emoji_limit: usize,
 
+    /// 内置的颜文字表，带上 emoji 表时一起启用。
+    kaomoji: Option<&'static EmojiTable>,
+
+    /// 每次查询最多插几个颜文字（配置 `[general] kaomoji`，缺省 1）。
+    kaomoji_limit: usize,
+
+    /// 内置的符号表，带上 emoji 表时一起启用。
+    symbols: Option<&'static EmojiTable>,
+
+    /// 每次查询最多插几个符号（配置 `[general] symbols`，缺省 1）。
+    symbol_limit: usize,
+
+    /// 打开着的符号面板；`None` 是没开。上屏与清空时关掉。
+    panel: Option<SymbolPanel>,
+
     /// 辅码态：`None` 是拼音态，`Some` 是辅码态（空串 = 刚敲下触发键、码段还没开始）。
     /// 码段不进 `composition`：它与拼音分段记账、分段画（见 [`AuxSegment`]）。
     aux_code: Option<String>,
@@ -334,9 +354,11 @@ const ENGLISH_SWITCH_PENALTY: f64 = 3.0;
 /// 英文词频的下限（Zipf）：没有词频的词按百万分之一算。
 const ENGLISH_ZIPF_FLOOR: f64 = 3.0;
 
-/// emoji 只配给前几个候选，每个词最多几个、一次最多几个。
+/// emoji、颜文字、符号只配给前几个候选，每个词最多几个、每样一次最多几个。
+/// 颜文字宽，一个词只跟一个，免得把横排撑长。
 const EMOJI_SCAN: usize = 5;
 const EMOJI_PER_WORD: usize = 2;
+const KAOMOJI_PER_WORD: usize = 1;
 const EMOJI_TOTAL: usize = 3;
 
 /// 自动造词：用户连着选出的两个词，合起来不在词库里、且这条接续已记过这么多次，就记成用户词。
@@ -396,6 +418,7 @@ impl Engine {
         Self {
             dictionary,
             extra_dictionaries: Vec::new(),
+            companion_words: None,
             translator: Box::new(NoTranslator),
             english_translator: Box::new(NoTranslator),
             modes: ModeKeys::default(),
@@ -454,6 +477,11 @@ impl Engine {
             phonetic: true,
             emoji: None,
             emoji_limit: EMOJI_TOTAL,
+            kaomoji: None,
+            kaomoji_limit: 1,
+            symbols: None,
+            symbol_limit: 1,
+            panel: None,
             aux_code: None,
             aux_enabled: false,
             aux_show: false,

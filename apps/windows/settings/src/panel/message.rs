@@ -14,6 +14,8 @@ pub(crate) enum Message {
     Wubi(bool),
     Traditional(bool),
     Emoji(Option<usize>),
+    Kaomoji(Option<usize>),
+    Symbols(Option<usize>),
     EnglishCandidates(bool),
     EnglishInChinese(bool),
     ChineseFirst(bool),

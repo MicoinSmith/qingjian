@@ -34,6 +34,12 @@ pub struct GeneralPage {
     /// 候选后面一次最多配几个 emoji。
     emoji: Retained<NSPopUpButton>,
 
+    /// 候选后面一次最多配几个颜文字。
+    kaomoji: Retained<NSPopUpButton>,
+
+    /// 候选后面一次最多配几个符号。
+    symbols: Retained<NSPopUpButton>,
+
     /// 英文模式也给候选。
     english: Retained<NSButton>,
 
@@ -160,6 +166,22 @@ impl GeneralPage {
             Setting::Emoji,
             target,
         );
+        let kaomoji = row_popup(
+            layout,
+            mtm,
+            "候选后面的颜文字",
+            &emoji_titles,
+            Setting::Kaomoji,
+            target,
+        );
+        let symbols = row_popup(
+            layout,
+            mtm,
+            "候选后面的符号",
+            &emoji_titles,
+            Setting::Symbols,
+            target,
+        );
         let english = checkbox(mtm, "英文候选与补全", Setting::EnglishCandidates, target);
         row_checkbox(layout, &english);
         note(
@@ -235,6 +257,8 @@ impl GeneralPage {
             shuangpin_raw_preedit,
             traditional,
             emoji,
+            kaomoji,
+            symbols,
             english,
             english_only_in_apps,
             english_in_chinese,
@@ -280,6 +304,8 @@ impl GeneralPage {
             .setEnabled(general.scheme().is_shuangpin());
         set_checked(&self.traditional, general.traditional);
         select(&self.emoji, Some(usize::from(general.emoji.get())));
+        select(&self.kaomoji, Some(usize::from(general.kaomoji.get())));
+        select(&self.symbols, Some(usize::from(general.symbols.get())));
         set_checked(&self.english, general.english_candidates);
         set_checked(
             &self.english_only_in_apps,

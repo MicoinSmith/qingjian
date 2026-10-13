@@ -9,7 +9,7 @@ use super::{
 };
 use crate::candidate::Language;
 use crate::correction::TypoCosts;
-use crate::emoji::EmojiTable;
+use crate::emoji::{EmojiTable, builtin, is_emoji};
 use crate::engine::decoded::EngineDecoded;
 use crate::fuzzy::FuzzyRules;
 use crate::history::InputHistory;
@@ -235,8 +235,15 @@ impl Engine {
         }
     }
 
-    pub fn with_emoji(mut self, table: EmojiTable) -> Self {
+    /// 带上 emoji 表：表里的普通符号（`≈` `¥`）筛掉、改由符号表出，并上内置的口语叫法；内置的颜文字、符号表与它们的词一起启用。
+    pub fn with_emoji(mut self, mut table: EmojiTable) -> Self {
+        table.retain(is_emoji);
+        table.merge(builtin::emoji_supplement());
         self.emoji = Some(table);
+        self.kaomoji = Some(&builtin::KAOMOJI);
+        self.symbols = Some(&builtin::SYMBOLS);
+        self.companion_words = Some(&builtin::WORDS);
+        self.forget_span_cache();
         self
     }
 
@@ -244,6 +251,16 @@ impl Engine {
     /// 保留词表，重新开启时无需加载；不改变普通候选的排序。
     pub fn set_emoji_limit(&mut self, limit: usize) {
         self.emoji_limit = limit.min(EMOJI_TOTAL);
+    }
+
+    /// 每次查询最多插入几个颜文字（0–3），规则同 [`Engine::set_emoji_limit`]。
+    pub fn set_kaomoji_limit(&mut self, limit: usize) {
+        self.kaomoji_limit = limit.min(EMOJI_TOTAL);
+    }
+
+    /// 每次查询最多插入几个符号（0–3），规则同 [`Engine::set_emoji_limit`]。
+    pub fn set_symbol_limit(&mut self, limit: usize) {
+        self.symbol_limit = limit.min(EMOJI_TOTAL);
     }
 
     pub fn with_fuzzy(mut self, rules: FuzzyRules) -> Self {
@@ -521,11 +538,12 @@ impl Engine {
         &self.extra_dictionaries
     }
 
-    /// 查词用的全部词库：主词库、附加词库、用户词。
+    /// 查词用的全部词库：主词库、附加词库、内置的符号与 emoji 名字、用户词。
     pub(super) fn all_dictionaries(&self) -> Vec<&Dictionary> {
         let mut all = Vec::with_capacity(self.extra_dictionaries.len() + 2);
         all.push(&self.dictionary);
         all.extend(self.extra_dictionaries.iter());
+        all.extend(self.companion_words);
         if let Some(user) = self.learner.user_words() {
             all.push(user);
         }

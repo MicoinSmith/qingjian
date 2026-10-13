@@ -1,4 +1,4 @@
-//! `[general] emoji`：候选后面一次最多配几个 emoji，0 不配。旧配置写的 `true` / `false` 读成 3 / 0，
+//! `[general] emoji` / `kaomoji` / `symbols`：候选后面一次最多配几个，0 不配。旧配置的 emoji 写的 `true` / `false` 读成 3 / 0，
 //! 认不出的写法按缺省读，不让这一项把整份配置拖成解析失败。
 
 use serde::{Deserialize, Deserializer, Serialize};
