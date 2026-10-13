@@ -74,7 +74,7 @@
     },
 
     "item": {
-      "type": "frame", "height": 27,
+      "type": "frame", "padding": [0, 0, 4, 0],
       "children": [
         { "type": "frame", "id": "highlight", "transition": { "duration": 100, "easing": "ease-out" },
           "when": "highlighted", "position": "absolute", "inset": [0, -5, 0, -5], "fill": "@accent", "radius": 4 },

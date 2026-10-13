@@ -227,7 +227,7 @@ fn main() {
     engine.set_aux_enabled(config.aux_code.enabled);
     engine.set_aux_show(config.general.aux_code_show);
     engine.set_chinese_first(config.general.chinese_first);
-    engine.set_emoji_candidates(config.general.emoji);
+    engine.set_emoji_limit(usize::from(config.general.emoji.get()));
     engine.set_english_in_chinese(config.general.english_in_chinese);
     engine.set_shift_letter_compose(config.general.shift_letter.compose());
     engine.set_shuangpin_raw_preedit(config.general.shuangpin_raw_preedit);
@@ -259,6 +259,7 @@ fn main() {
         language = language.map_or("off", |l| l.code()),
         page_size = router_config.page_size,
         page_keys = %format!("{}{}", router_config.page_keys.0, router_config.page_keys.1),
+        highlight_keys = router_config.highlight_keys.key(),
         layout = router_config.layout.key(),
         appearance = router_config.appearance.key(),
         scheme = %if config.general.scheme_label().is_empty() { "全拼".to_owned() } else { config.general.scheme_label() },

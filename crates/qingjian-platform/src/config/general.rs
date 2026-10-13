@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use super::scheme::{Scheme, scheme_label};
 use super::{
-    Appearance, CandidateRenderer, FontSize, LayoutMode, LogLevel, PreeditMode, ShiftLetter,
+    Appearance, CandidateRenderer, EmojiCount, FontSize, LayoutMode, LogLevel, PreeditMode,
+    ShiftLetter,
 };
 
 /// 每页最多几个候选：数字键只有 1–9。
@@ -80,8 +81,11 @@ pub struct GeneralConfig {
     /// 中文模式下整段是英文词或英文词的开头时给英文候选与补全（`hello`、`compa` → company）。关掉中文模式只出中文，英文模式照旧。
     pub english_in_chinese: bool,
 
-    /// 候选后面配 emoji（`kaixin` → 开心 😄）。关掉候选里就只有字词。
-    pub emoji: bool,
+    /// 候选后面一次最多配几个 emoji（`kaixin` → 开心 😄），0 时候选里只有字词。
+    pub emoji: EmojiCount,
+
+    /// 中西文混排自动空格：汉字与半角字母 / 数字之间补一个空格（「用 Go 写了 30 行」）。缺省关；目前只有 macOS 用。
+    pub auto_space: bool,
 
     /// 中文模式下按住 Shift 敲的字母：交给应用（缺省）还是收进组句缓冲区参与匹配。
     /// 收进组句才能打出「C盘」这类混杂词（`Cpan` 与 `cpan` 一样匹配）。
@@ -89,6 +93,12 @@ pub struct GeneralConfig {
     /// 内置英文模式：开着时单击切换键（`[shortcut] switch_mode`）或按 Caps Lock 能进英文模式。
     /// 关掉后青简保持中文模式，切换键与语言栏按钮都不再切过去；要打英文请用系统快捷键切到别的输入法。
     pub english_mode: bool,
+
+    /// Windows：首次使用时默认英文；按应用记忆时用于没有记录的应用。
+    pub default_english: bool,
+
+    /// Windows：按应用 exe 名记住中英状态，仅保存在本次 Server 运行期间。
+    pub remember_mode_per_app: bool,
 
     /// 中文模式下不在组句时敲的标点转成全角（`，。？！` 等，数字后的 `.` 保持半角）。
     /// Windows 悬浮状态条上可点切换；macOS 在偏好设置中选择默认模式。
@@ -165,9 +175,12 @@ impl Default for GeneralConfig {
             traditional: false,
             chinese_first: false,
             english_in_chinese: true,
-            emoji: true,
+            emoji: EmojiCount::default(),
+            auto_space: false,
             shift_letter: ShiftLetter::default(),
             english_mode: true,
+            default_english: false,
+            remember_mode_per_app: false,
             full_width_punctuation: true,
             english_full_width_punctuation: false,
             punct_commits: false,

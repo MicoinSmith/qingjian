@@ -394,8 +394,11 @@ impl Host {
             (Setting::EnglishInChinese, SettingValue::Bool(on)) => {
                 self.settings.set_bool("general", "english_in_chinese", on);
             }
-            (Setting::Emoji, SettingValue::Bool(on)) => {
-                self.settings.set_bool("general", "emoji", on);
+            (Setting::Emoji, SettingValue::Index(index)) => {
+                self.settings.set_value("general", "emoji", index as i64);
+            }
+            (Setting::AutoSpace, SettingValue::Bool(on)) => {
+                self.settings.set_bool("general", "auto_space", on);
             }
             (Setting::ShiftLetter, SettingValue::Bool(on)) => {
                 let mode = if on {

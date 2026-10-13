@@ -3,13 +3,17 @@ mod apps;
 mod aux_code;
 mod candidate_renderer;
 mod dictionaries;
+mod emoji_count;
 mod font_size;
 mod general;
+mod highlight_keys;
 mod key_combo;
 mod layout_mode;
 mod log_level;
 mod model;
 mod modifiers;
+mod optional_key_combo;
+mod page_keys;
 mod preedit_mode;
 mod scheme;
 mod shift_letter;
@@ -35,16 +39,19 @@ pub use apps::{
 pub use aux_code::AuxCodeConfig;
 pub use candidate_renderer::CandidateRenderer;
 pub use dictionaries::{DEFAULT_DOMAINS, DictionariesConfig};
+pub use emoji_count::EmojiCount;
 pub use font_size::FontSize;
 pub use general::{
     DEFAULT_PAGE_KEYS, DEFAULT_THEME, GeneralConfig, LEARNING_LANGUAGE_OFF, MAX_PAGE_SIZE,
     PAGE_KEY_OPTIONS,
 };
+pub use highlight_keys::HighlightKeys;
 pub use key_combo::KeyCombo;
 pub use layout_mode::LayoutMode;
 pub use log_level::LogLevel;
 pub use model::LocalModelConfig;
 pub use modifiers::Modifiers;
+pub use page_keys::PageKeys;
 pub use preedit_mode::PreeditMode;
 pub use scheme::{Scheme, scheme_label, scheme_name};
 pub use shift_letter::ShiftLetter;
@@ -214,7 +221,7 @@ page_size = 9
 page_keys = "[]"
 # 候选窗口外观：system 跟随系统 / light 浅色 / dark 深色
 appearance = "system"
-# 候选窗口主题（主题 id）：qingjian 青简绿 / system-blue 系统蓝 / wechat 微信绿 / sakura 樱花。只对青简渲染器生效
+# 候选窗口主题（主题 id）：qingjian 青简绿 / system-blue 系统蓝 / wechat 微信绿 / sakura 樱花 / dafeiyu 大肥鱼 / miku 初音未来 / bocchi 波奇酱。只对青简渲染器生效
 theme = "qingjian"
 # 候选窗口排布：vertical 竖排 / horizontal 横排（横排只给高亮候选显示译文）
 layout = "vertical"
@@ -241,14 +248,20 @@ traditional = false
 chinese_first = false
 # 中文模式下整段是英文词或英文词的开头时给英文候选与补全（hello、compa → company）；false 时中文模式只出中文，英文模式不受影响
 english_in_chinese = true
-# 候选后面配 emoji（kaixin → 开心 😄）；false 时候选里只有字词
-emoji = true
+# 候选后面一次最多配几个 emoji（kaixin → 开心 😄），0–3；0 时候选里只有字词
+emoji = 3
+# 中西文之间自动补空格：汉字与半角字母 / 数字相邻时补一个空格，「用Go写了30行」上屏成「用 Go 写了 30 行」。缺省关；只有 macOS 用
+auto_space = false
 # 中文模式下按住 Shift 敲的字母：passthrough 拼音原样上屏、字母交给应用（缺省，与以前一致）/ compose 收进组句
 # 缓冲区参与匹配，这样 Cpan 与 cpan 一样能出「C盘」。英文模式与英文直输段（no-Way）不受影响
 shift_letter = "passthrough"
 # 内置英文模式：开着时单击切换键（[shortcut] switch_mode）或 Caps Lock 亮着进英文模式
 # 关掉后青简保持中文模式，切换键与语言栏按钮都不再切过去；要打英文请用系统快捷键（Win+Space）切到别的输入法。只有 Windows 用，macOS 的中英切换是 Caps Lock
 english_mode = true
+# Windows：初始英文；按应用记忆时也用于没有记录的应用
+default_english = false
+# Windows：按应用 exe 名记住中英状态，重启青简后重新使用初始模式
+remember_mode_per_app = false
 # 中文模式下（没在组句时）敲的标点转全角：, . ? ! : ; ( ) 等，数字后面的 . 保持半角。Windows 上悬浮状态条的「，。」格可以点着切；macOS 在偏好设置中选择默认中文标点模式
 full_width_punctuation = true
 # 英文模式下的同一件事，中英各记一份，状态条切的是当前模式那份；只有 Windows 用
@@ -291,6 +304,10 @@ system_text_replacements = true
 # enabled = true    # 是否启用；停用仍保留位置
 
 [shortcut]
+# Windows：切换当前模式的全 / 半角标点；空串禁用，可设为 "ctrl+." 或其他修饰键加字母、数字、句号
+toggle_punctuation = ""
+# Windows：主翻页键之外同时启用的键对，可多选，如 ["[]", ",.", "-="]
+extra_page_keys = []
 # 前缀模式键，只能是 v / u / i 之一且互不相同（这三个字母不是任何拼音音节的开头）
 # 表达式模式：v1+2 出 3，v123 出中文数字
 expression = "v"
@@ -298,6 +315,9 @@ expression = "v"
 question = "u"
 # 没在组句时敲 ? 是否也进问字模式（中英文模式都行，后面跟字母才是问题，跟别的键还原成问号）；false 的话问号就是问号
 question_mark = false
+# 候选高亮由哪对方向键移动：updown 用 ↑ / ↓ 移高亮、← / → 移拼音光标（缺省）；leftright 改用 ← / → 移高亮
+# leftright 时两键把「拼音行 + 候选栏」当成一条从左到右的序列走：→ 到拼音光标末位溢出成选词，← 到候选首位回拼音光标；↑ / ↓ 不做事。只有 Windows 用
+highlight_keys = "updown"
 "#,
     template_shortcut_keys!(),
     r#"
@@ -351,6 +371,8 @@ api_key_env = "QINGJIAN_API_KEY"
 # 单次请求超时（毫秒）、停止敲键多久后才发请求（毫秒）
 timeout_ms = 5000
 debounce_ms = 300
+# 两次网络请求起始之间的最短间隔，失败也计入；缓存命中不等待
+min_interval_ms = 3000
 # 光标前 / 后最多发多少个字符——这是发往云端的上下文上限
 lookback = 64
 lookahead = 32
@@ -566,7 +588,7 @@ impl Config {
 const APPEARANCE_COMMENT: &str = "# 候选窗口外观：system 跟随系统 / light 浅色 / dark 深色\n";
 
 /// 模板里 `theme` 那一行上方的注释，同上。
-const THEME_COMMENT: &str = "# 候选窗口主题（主题 id）：qingjian 青简绿 / system-blue 系统蓝 / wechat 微信绿 / sakura 樱花。只对青简渲染器生效\n";
+const THEME_COMMENT: &str = "# 候选窗口主题（主题 id）：qingjian 青简绿 / system-blue 系统蓝 / wechat 微信绿 / sakura 樱花 / dafeiyu 大肥鱼 / miku 初音未来 / bocchi 波奇酱。只对青简渲染器生效\n";
 
 /// 旧写法里 `theme` 写的外观；新写法（或没写）为 `None`。
 fn legacy_appearance(document: &DocumentMut) -> Option<Appearance> {

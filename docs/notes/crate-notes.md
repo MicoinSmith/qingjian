@@ -22,6 +22,9 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 
 ## crates/qingjian-core
 
+`Engine::set_emoji_limit` 控制单次查询插入的 emoji 数，范围 0–3，默认 3、0 关闭、越界值按 3 处理；每词最多两个的限制保留，普通候选相对顺序不变。三端读 `[general] emoji`（`qingjian_platform::EmojiCount`，旧配置的 `true` / `false` 读成 3 / 0），CLI 用 `--emoji-limit <0..3>`。
+双拼解码由 `Engine::decode` 传入当前模糊音规则：先取普通合法音节，失败时才保留能由模糊音补成合法音节的声韵组合（如 `suang` → `shuang`）。查询沿用带代价的模糊音展开，上屏沿用原读音与按键的消耗换算；不修改无模糊音时的 `Scheme::decode` 行为。
+
 模块：`composition`（缓冲区与光标；中文模式下 Shift+字母按小写进 `buffer` 参与匹配、大写记在 `shifted`，`typed_text` 还原后用于原样上屏）/ `parser` / `correction`（拼写纠错：整段一处编辑的候选纠正 + `typo` 音节级敲错变体表，后者进整句词图当带代价的边）/
 `candidate` / `ranking` / `shortcut` / `sentence` / `fuzzy` / `shuangpin`（双拼：七套方案键位表、键 → 全拼解码与消耗换算）/ `zhuyin`（大千注音：键 → 注音符号 → 拼音，`[general] zhuyin` 开关，声调只判音节完整不进查询）/ `emoji` /
 `english`（英文模式候选）/ `engine`（`query::EnglishTail`：句末英文词并入整句，`woxiangxuehaorust` → 我想学好rust，尾段也像拼音时按分数与拼音读法比）。
@@ -46,6 +49,9 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 - 中英混输的英文词位置：`Engine::set_chinese_first`（配置 `[general] chinese_first`，缺省关）关着时拼音不像话的输入英文排第一（`extras::insert_english`，
   用户老选中文词时仍让中文在前），开着时整句先插、英文词紧随其后排第二（`query_inner` 里两步的先后按开关掉转）；句末英文词并入整句（`EnglishTail`）不受它影响。
   缺省关是回放定的（9241 词 / 269 条英文上屏：缺省开英文首选 82.5% → 7.1%）。
+- 中西文自动空格（`spacing` 判交界，`engine/spacing.rs` 判上文；配置 `[general] auto_space`，缺省关）：`commit` / `take_raw` 自己补前导空格并把它记成一次直通，
+  候选内部的交界在 `commit_with` 里补、`LastCommit.chars` 按补后的字数记；直通字符由壳先问 `auto_space_before`。上文取最近一条没退格的上屏末字，
+  还没上屏过时用组句首键读到的应用前文（`rescoring_before`），删了一半或焦点离开后不知道上文就不补。
 - `custom_phrase::merge_replacements` 把平台给的「输入码 → 短语」表（macOS 系统文本替换）并进配置里的自定义短语：每条占该码最靠前的空位（1–9），
   输入码不是小写字母、已有同码同文本、九位都满的跳过；Core 不管数据从哪来。
 - 拼写纠错（`correction`）：整段一处编辑的变体里相邻换位允许末尾音节没敲完（`loose_segmentation`，`mignt` → `ming t…`；
@@ -84,6 +90,8 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
   壳激活期间每 60 秒 `Engine::flush_learning`；IMK 回调边界 `imk::catch_panic` 拦 panic、缓冲区字母原样上屏（见 architecture.md「崩溃不丢」）。
 
 ## crates/qingjian-predict
+
+请求控制：默认防抖 300 ms、最短起始间隔 3000 ms。Engine 的自动入口尊重 `automatic`，显式入口 `request_manual_prediction` 跳过防抖但遵守间隔；取消通道消息清除待发输入，已发结果由序号过滤。缓存命中不受网络间隔限制。SDK 隐式重试关闭，保留模型拒绝关思考参数时的一次显式兼容重试，以及 401/402/403 暂停 10 分钟。
 
 - `CloudPredictor`：`Predictor` trait 的网络实现（async-openai，OpenAI 兼容接口，默认 DeepSeek），后台线程防抖 / 缓存 / 超时，`submit` / `poll` 非阻塞。
   `PredictConfig` 是配置的 `[predict]` 分节。只在组句中联想，一次请求给云端词（容错校验后补进候选第一页末尾 `[predict] slots` 格，缺省 2，不预留不占位，
@@ -193,7 +201,7 @@ P2C 自由生成实验：`--eval-text <集> --eval-generate data/models/hanzhang
 **青简渲染器还不会画矩阵**：main 上的 `renderer/matrix.rs` 建在手算坐标的旧渲染器上，合进主题分支时随旧渲染器删了，场景树这边要另做一个矩阵窗口模板
 （固定列宽、超宽截尾、网格下一行信息）；移植之前 mac 壳只在系统绘制下展开矩阵（`Host::grid_keys` 多一个 `!uses_bitmap()` 条件），`Frame::columns` / `column_ems` 渲染器暂时不读。
 
-自绘渲染器：候选窗一帧 + 主题 → 预乘 RGBA 位图。主题是 `themes/<id>/theme.json`（内置青简绿 / 系统蓝 / 微信绿 / 樱花编进 crate；新增内置主题前先查主题仓库 qingjian-themes 有没有同名 id，加了之后同步它 `tools/check.py` 的 `RESERVED_IDS`，否则那个用户主题会被拒绝加载；图片也可以 `include_bytes!` 编进去（`BUILTINS` 的文件表），`Theme::builtin(id)` / `builtins()` 取；没写 `extends` 的主题都以青简绿为底（`theme/mod.rs` 的 `ROOT_THEME`），用户主题还能取到所继承内置主题的图片；用户主题在 `<数据目录>/themes/<id>/theme.json`，`ThemeLibrary` 合并并按目录戳热加载；`theme/file/` 是 serde 模型，`theme/jsonc.rs` 解析前去掉注释与尾逗号，格式见 `docs/design/theme.md`「格式（schema 1）」），`renderer/build/` 按模板实例化场景树（`scene/`：Taffy 布局树 + 每节点一个 `Visual`，竖排三列用 grid、其余 flex，高亮条与光标绝对定位；布局不取整，文字测量按节点缓存；表格一行里的格子按第一段文字的基线对齐，`scene/baseline.rs` 补上边距再排一遍），再按树序画（节点的投影 / 内阴影在 `scene/draw/effect.rs`：把节点自己的画面画进离屏图取 alpha，三遍盒式模糊；窗口阴影就是根节点的投影；位图按 `scene/extent.rs` 并出的画出范围开（投影、描边、负 inset 伸出窗口的装饰都在里面），壳按 `Rendered::content_*` 对齐，mac 面板关系统阴影；`Rendered::hits` 是候选与各条译词的点击区域（`renderer/hit/`，译词按义项分隔数分条，横排底下那行算高亮候选的），壳只在这些区域收鼠标、其余穿透）；过渡在 `animation/`（缓动、插值）与 `renderer/{animate,retained}.rs`：`Renderer` 留住上一帧，按节点 `id` 配对算过渡，`Rendered::next_frame` 告诉壳多久后调 `tick`（mac `candidates/animation.rs` 的 NSTimer、Windows UI 线程消息循环截 `WM_TIMER`），窗口收起调 `forget`；动画帧只重画、不重建树，效果遮罩与图片框按键缓存（`scene/cache_key.rs`）；循环动画 `animation/keyframes.rs` 求姿态，带姿态节点整棵子树画进缓存小图再变换贴上，循环帧走局部重画（`renderer/partial.rs` + `scene/split.rs` 分段模式）；tiny-skia 栅格 + cosmic-text 文字（fontdb 按平台清单只加载几个字体文件、不扫系统；
+自绘渲染器：候选窗一帧 + 主题 → 预乘 RGBA 位图。主题是 `themes/<id>/theme.json`（内置青简绿 / 系统蓝 / 微信绿 / 樱花 / 大肥鱼 / 初音未来 / 波奇酱编进 crate；新增内置主题前先查主题仓库 qingjian-themes 有没有同名 id，加了之后同步它 `tools/check.py` 的 `RESERVED_IDS`，否则那个用户主题会被拒绝加载；图片也可以 `include_bytes!` 编进去（`BUILTINS` 的文件表），`Theme::builtin(id)` / `builtins()` 取；没写 `extends` 的主题都以青简绿为底（`theme/mod.rs` 的 `ROOT_THEME`），用户主题还能取到所继承内置主题的图片；用户主题在 `<数据目录>/themes/<id>/theme.json`，`ThemeLibrary` 合并并按目录戳热加载；`theme/file/` 是 serde 模型，`theme/jsonc.rs` 解析前去掉注释与尾逗号，格式见 `docs/design/theme.md`「格式（schema 1）」），`renderer/build/` 按模板实例化场景树（`scene/`：Taffy 布局树 + 每节点一个 `Visual`，竖排三列用 grid、其余 flex，高亮条与光标绝对定位；布局不取整，文字测量按节点缓存；表格一行里的格子按第一段文字的基线对齐，`scene/baseline.rs` 补上边距再排一遍），再按树序画（节点的投影 / 内阴影在 `scene/draw/effect.rs`：把节点自己的画面画进离屏图取 alpha，三遍盒式模糊；窗口阴影就是根节点的投影；位图按 `scene/extent.rs` 并出的画出范围开（投影、描边、负 inset 伸出窗口的装饰都在里面），壳按 `Rendered::content_*` 对齐，mac 面板关系统阴影；`Rendered::hits` 是候选与各条译词的点击区域（`renderer/hit/`，译词按义项分隔数分条，横排底下那行算高亮候选的），壳只在这些区域收鼠标、其余穿透）；过渡在 `animation/`（缓动、插值）与 `renderer/{animate,retained}.rs`：`Renderer` 留住上一帧，按节点 `id` 配对算过渡，`Rendered::next_frame` 告诉壳多久后调 `tick`（mac `candidates/animation.rs` 的 NSTimer、Windows UI 线程消息循环截 `WM_TIMER`），窗口收起调 `forget`；动画帧只重画、不重建树，效果遮罩与图片框按键缓存（`scene/cache_key.rs`）；循环动画 `animation/keyframes.rs` 求姿态，带姿态节点整棵子树画进缓存小图再变换贴上，循环帧走局部重画（`renderer/partial.rs` + `scene/split.rs` 分段模式）；tiny-skia 栅格 + cosmic-text 文字（fontdb 按平台清单只加载几个字体文件、不扫系统；
 脚本字体文件要先过轮廓检查，任一面带 `glyf` / `CFF ` 才加载——macOS 26+ 的苹方换成私有 `hvgl` 可变轮廓，swash 读不出字形，
 这种文件跳过，简体回退到 Songti.ttc），
 自己解析 `trak` 字距表、按主题 gamma 加深笔画；主题样式的字族在 `theme/font/families.rs` 去重成字族表（样式里存序号），`TextPainter::use_families` 换主题时给每条链挑装了的字族，主题要的系统字族由壳查文件经 `Renderer::load_theme_fonts` 加载（mac 同 `bitmap/font_files.rs`、Windows 同 `system_fonts::family_files`），随主题带的字体在 `theme/assets.rs` 核路径；主题图片 `.svg` 结尾的走 `theme/svg_image.rs`（resvg 0.48，与渲染器同一个 tiny-skia，关掉 text / raster-images 与外部文件读取），画时按像素尺寸栅格并缓存；cosmic-text 打了 `opsz` 光学字号补丁（qingjian-team/cosmic-text 分支 `qingjian-opsz`，workspace `[patch.crates-io]` 钉 rev）。
@@ -240,6 +248,7 @@ P2C 自由生成实验：`--eval-text <集> --eval-generate data/models/hanzhang
 IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences` 分目录。
 
 - 输入法菜单（状态项 + 系统输入源菜单）与偏好设置窗口都是配置文件的前端：只写 `config.toml`，`Host::apply_config` 一条通路热加载，激活期间每秒看一次文件 mtime。
+  翻页键（`[general] page_keys`）走 `Session::page_target` / `can_turn_page`：选 `-=` 时 `-` / `=` **没有上一页 / 下一页就落回原语义**（英文直输段），别的翻页键翻不动照旧吃键（`imk/controller/display.rs::page_key`）。Windows / Linux 还是老行为，尚未同步。
   输入方案（`[general] scheme`）也在这里装配：双拼 / 注音设给引擎，形码额外按 `paths::code_table_path()` 挂码表
   （用户目录 `wubi/wubi86.tsv` 优先，包里 `Resources/wubi/` 兜底；找不到只警告并按拼音跑）。
 - `apps/macos/scripts/bundle.sh --install` 打包安装到 `~/Library/Input Methods/`（开发用），`--pkg` 做分发用的 pkg（装 `/Library/Input Methods/`，postinstall 跑 `qingjian-macos --register`
@@ -248,7 +257,7 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
 - 日志在 `~/Library/Logs/Qingjian/`（按天分文件留 7 天，删了会重建），用户数据与配置在 `~/Library/Application Support/Qingjian/`。
 - 配置项：云联想 `[predict]`（偏好设置「云服务」页有「测试连接」按钮：`qingjian_predict::ConnectionTest` 起线程发一条最小请求，`Host` 用独立定时器 `CloudTestMonitor` 轮询结果显示到窗口底部；
   `reasoning_effort` 缺省 `none`，DeepSeek V4 默认思考，不关正文为空）；模糊音 `[fuzzy]` 默认都关；`[general]` 学习语言（`off` 不显示译文）/ 每页候选数 / 翻页键 / 外观 / 竖排横排 / 拼音显示位置 /
-  英文模式候选开关 / 中文优先 `chinese_first` / 中文模式英文词 `english_in_chinese`（`Engine::set_english_in_chinese`）/ emoji 候选 `emoji`（`Engine::set_emoji_candidates`）/ 双拼方案 `shuangpin`（小鹤 / 自然码 / 微软 / 搜狗 / 智能ABC / 小浪 / 首道，空为全拼）/ 日志级别 `log_level`（缺省 info 不含敲的内容，debug 逐键记，热切换）/ 输入日志 `input_log`；
+  英文模式候选开关 / 中文优先 `chinese_first` / 中文模式英文词 `english_in_chinese`（`Engine::set_english_in_chinese`）/ emoji 候选 `emoji`（`Engine::set_emoji_candidates`）/ 中西文自动空格 `auto_space`（直通字符经 `text.rs` 的 `pass_through`，开着时首键也读光标前文）/ 双拼方案 `shuangpin`（小鹤 / 自然码 / 微软 / 搜狗 / 智能ABC / 小浪 / 首道，空为全拼）/ 日志级别 `log_level`（缺省 info 不含敲的内容，debug 逐键记，热切换）/ 输入日志 `input_log`；
   `[shortcut]` 中英切换键 `switch_mode`（macOS 只认 `shift`：缺省 `[]` 用 Caps Lock 切；勾上后单击 Shift 切中英、Caps Lock 只管大小写，`control` / `ctrl+alt+space` 忽略；
   切换时右上角弹 `host/mode_osd.rs` 的提示，组句中切到英文还会把拼音原样上屏，见 `host/mode_switch.rs` 与 `imk/controller/click.rs::commit_raw_after_switch`；
   单击的边沿用修饰键事件（`IMKInputController` 的 `recognizedEvents:` 声明 `NSKeyDownMask | NSFlagsChangedMask`——缺省只回 `NSKeyDownMask`，
@@ -269,28 +278,36 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
 
 一个产品两个 package：`server`（Server 进程：IPC 分派 + Engine + 命名管道 + 自绘候选窗与悬浮状态条）与 `tsf`（TSF 文本服务 DLL，lib 名固定 `qingjian_tsf`），
 外加 `settings`（WinUI 3 设置程序，含「辅码」页）与 `installer`（Inno Setup）。
+设置的共用 `panel/controls` 使用原生主题卡片与 Grid：名称、说明自动换行，控件按内容占宽，页面限制内容宽度并统一间距；通用与云服务页按用途分组。页面按标题保留身份，切换页面重置滚动位置，同页修改保留焦点。配置读写与即时生效方式保持一致。
 Server 侧辅码接线：`RouterConfig.aux_code_key` / `aux_code_show`（`apply_config` 热加载）、`assembly` 从随包 `codes/` 与用户 `codes/` 装码表
 （`[aux_code] disabled` 过滤，`code_tables::load`）、按键在 `dispatch/key/input.rs` 分流（触发键进辅码态、辅码态里字母进码段、
 大写（`shift_letter = "compose"`）先清码段回拼音态再进缓冲区、标点先上屏高亮候选再转全角）、候选窗 `ui/candidates/row.rs` 的 `Row.code` 把码用方括号括起来紧跟在候选词后面（不进 annotation），拼音行 `view.rs` 给码段加下划线。
 热加载的 `dicts/` 与 `codes/` 目录与启动同款（修过一处传基础目录的错）。不合成一个 crate，因为 DLL 不能带 Engine 的依赖树，见 `apps/windows/README.md`；
 协议类型在 `qingjian-platform::protocol`，设计见 `docs/design/architecture.md`「Windows：TSF」。
+
+Windows 的 `dispatch/mode` 管理可选的初始英文与按应用模式记忆（`[general] default_english` /
+`remember_mode_per_app`，缺省关闭）：exe 名不区分大小写，相同 exe 的会话共享；未知宿主按会话隔离。
+应用记忆只驻留 Server 内存，配置中的模式策略变更时重置；模式焦点与组句焦点分开，避免切应用时丢掉待提交的输入。
+`InputSettings.restore_mode` 让启用这些设置的 DLL 重连时先取 Server 状态，不用旧状态覆盖默认值；旧协议缺字段按 false 处理。
 输入方案由 `[general] scheme` 一处决定，Server 启动与热加载各装配一次；形码的码表用 `dispatch::code::find_code_table` 找
 （用户目录 `wubi/wubi86.tsv` 优先，随包 `assets/wubi/wubi86.tsv` 兜底——走 `assets/` 与 emoji / levels 一致，开发布局也对得上），**路径在启动时定下、热加载不重新找**。
 选了形码却没有码表文件时只警告并按拼音跑——配置说五笔、引擎还在拼音是静默错位，宁可吵。
 中英模式的两项设置（`[shortcut] switch_mode` 切换键：勾选 shift / control / ctrl+alt+space，`[general] english_mode` 内置英文模式开关）
 由 Server 经协议下发给 DLL（`InputSettings`，见下文「按键行为设置」），改完在下一拍（约 320 ms）生效；
-`ctrl+alt+space` 走 TSF 保留键登记（`com/key/preserved.rs` 的 `GUID_SWITCH_MODE`）。系统的 Ctrl + Space（「输入法/非输入法切换」）不进勾选项但适配它：
+`ctrl+alt+space` 走 TSF 保留键登记（`com/key/preserved.rs` 的 `GUID_SWITCH_MODE`）。系统的 Ctrl + Space（「输入法/非输入法切换」）由设置页单独列项，`settings/src/panel/system_hotkey.rs` 通过 `ImmGetHotKey` / `ImmSetHotKey` 读写 `IME_CHOTKEY_IME_NONIME_TOGGLE`，不写入 `switch_mode`、不重复注册 TSF 保留键；同一项也会影响其他简体中文输入法。TSF 适配它：
 它翻的「输入法开 / 关」compartment（`com/mode/sink.rs`）关 = 英文、开 = 中文，我们切模式时把开关写成一致；开关一变也作废被截走 Space 的那次「单击 Ctrl」。
-模式全局一份、存在 Server（`Router.english`），DLL 激活 / 得到焦点 / 轮询时 `SyncMode` 取回，用户切了 `ModeChanged` 报上去。会话号用线程 id（`com::session_id`）——TSF 的 client id
+模式缺省全局共享，启用按应用记忆后由 Server 按宿主保存；当前激活值在 `Router.english`。DLL 激活 / 得到焦点 / 轮询时 `SyncMode` 取回，用户切了 `ModeChanged` 报上去。会话号用线程 id（`com::session_id`）——TSF 的 client id
 各进程都是同样那几个值，拿它当会话号会在 Server 那边撞号。四条切换入口都汇到
 `service/mode.rs::set_english_mode` 一处拦住；状态条点击在 Server 侧（`dispatch/status/mod.rs`）按同一项拦，
 设置界面在 `settings/src/panel/pages/general.rs`。
 
 TSF 原有数字 / OEM 标点 / 空格键码按当前布局用 `ToUnicodeEx` 解析（bit 2 避免改变键盘状态），
 仅接受单个非代理项 UTF-16 单元。字母、小键盘和 AltGr 处理不变，不保证组合音符输入。
-拼音显示位置（`[general] preedit`）在 Windows 上分两处落地：Server 把它读进 `RouterConfig.preedit` 并随 `Frame.preedit_mode`
-下发给 DLL，DLL（`com/service/key_sink.rs`）按 `inline()` 决定要不要放行内拼音，Server（`ui/candidates/render_data.rs::window_preedit`）
-按 `in_window()` 决定候选窗口顶部画不画拼音行；`window` 模式没有组句范围，光标矩形改从 `com/edit/anchor.rs::caret_rect`（当前选区）量。
+没在组句的数字在 `OnTestKeyDown` 先问 Server（`key_sink::preflight_digit`）：Passthrough 则 Test 不吃、键原生进应用
+（避免 `InsertTextAtSelection` 在未设 `KEYBOARD_DISABLED` 的 `IS_NUMERIC_PASSWORD` 框里倒序）；注音等 Consumed
+时把结果缓进 `pending_digit`，`OnKeyDown` 再应用。拼音显示位置（`[general] preedit`）在 Windows 上分两处落地：
+Server 把它读进 `RouterConfig.preedit` 并随 `Frame.preedit_mode` 下发给 DLL，DLL（`com/service/key_sink.rs`）按
+`inline()` 决定要不要放行内拼音，Server（`ui/candidates/render_data.rs::window_preedit`）按 `in_window()` 决定候选窗口顶部画不画拼音行；`window` 模式没有组句范围，光标矩形改从 `com/edit/anchor.rs::caret_rect`（当前选区）量。
 连不上 Server 时 DLL 自己拉起它（`tsf/src/com/service/launch.rs`）：`ShellExecuteW` 起与 DLL 同目录的 `qingjian-server.exe`
 （`uiAccess=true` 的 exe 用 `CreateProcess` 报 740），进程内 5 秒冷却 + 跨进程命名互斥体防止砸出一串 Server；
 起完清掉重连退避，下一键就试。Server 只在登录时由「启动」文件夹拉起，中途挂了以前只能等下次登录。
@@ -304,6 +321,11 @@ Server 每次轮询比对用户 `dicts` 的路径 / mtime / 长度快照，配�
 所以由 **Server 读配置、经协议下发**（`InputSettings`：`OpenSession` 回包带一次，之后每拍 `SyncMode` 跟着走），
 DLL 不读文件、不查 mtime。`SessionOpened` 只回过协议版本对得上的 DLL——老的 `open` 是只写不读，
 多回一条会被它当成下一次 `Poll` 的应答而报错，那条连接就废了；老 DLL 从 `ModeSync` 那一拍也能拿到同一份（新字段直接忽略）。
+
+Windows 可选的 `[shortcut] toggle_punctuation` 经 `InputSettings` 下发，由 TSF 保留键触发原有标点菜单命令；
+修改或关闭时撤掉旧登记，句号使用 `VK_OEM_PERIOD`，不能使用字符的 ASCII 值（那是 Delete）。
+首次获焦可能早于 `Activate` 设置 `thread_mgr`，因此保留键同步必须在设置值缓存命中前执行，管理器就绪后才能补登记。
+`extra_page_keys` 与主翻页键并用，只影响候选翻页，不覆盖表达式、直输段或辅码触发键。
 
 ## assets
 
@@ -351,8 +373,9 @@ DLL 不读文件、不查 mtime。`SessionOpened` 只回过协议版本对得上
 ## apps/linux
 
 `qingjian-linux-server` 为独立产品 `0.1.0-dev`，装配本地 Engine、词库、释义、频率学习、个人 n-gram、词汇记录与可选输入日志，
-本地整句模型优先加载用户 `~/.local/share/qingjian/models/hanzhang-tongbian/` 或随包 `data/models/hanzhang-tongbian/`，缺失时回退 `models/hanzhang-zhiwei/`；旧用户目录兼容读取。按 `[model] enabled` 在后台加载、停键 80 ms 后重排，节拍与 Windows Server 的 `dispatch/rescore` 相同；不接云服务。`dispatch/session` 交换每个上下文的 EngineSession；真正的能力变化丢弃输入，普通焦点切换隔离保存。
+本地整句模型优先加载用户 `~/.local/share/qingjian/models/hanzhang-tongbian/` 或随包 `data/models/hanzhang-tongbian/`，缺失时回退 `models/hanzhang-zhiwei/`；旧用户目录兼容读取。按 `[model] enabled` 在后台加载、停键 80 ms 后重排，节拍与 Windows Server 的 `dispatch/rescore` 相同；不接云服务。配置热加载在 `dispatch/reload`：`tick` 每秒看 `config.toml` mtime 与用户 `dicts/` 快照，`[model]` / `[dictionaries]` / 学习语言按变化重建，其余无条件重设；`preedit`、`input_log` 仍要重启。`dispatch/session` 交换每个上下文的 EngineSession；真正的能力变化丢弃输入，普通焦点切换隔离保存。
 默认面板插件仅转换事件，Shift 模式、候选点击、分页和失焦提交都由 Server 决定。
+插件在清空预编辑之前上屏；上屏回调重入后核对生命周期和帧身份，跳过过期重画而不撤销或重复提交，见 [Linux 协议与状态](linux-fcitx5.md#协议与状态)。
 
 Unix socket 用共享长度前缀与 Frame（当前公共版本 8，与 `PROTOCOL_VERSION` 同步，Fcitx5 插件里写死在 `qingjian.cpp` 的 OpenSession）；插件复用一条连接，每个上下文独立会话。Linux v3 扩展逐会话握手、确认 Sensitive/Password/Disable 后接受按下/释放、焦点和点击事实。
 候选回报绑定连接代次、上下文和服务端帧序号，仅当前聚焦页的有效释义进入 `note_displayed`，不把生成帧算作已展示。

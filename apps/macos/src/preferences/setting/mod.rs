@@ -128,8 +128,10 @@ pub enum Setting {
     /// `[general] english_in_chinese`，勾选框：中文模式也给英文词与补全。
     EnglishInChinese,
 
-    /// `[general] emoji`，勾选框：候选后面配 emoji。
+    /// `[general] emoji`，弹出菜单：候选后面一次最多配几个 emoji。
     Emoji,
+    /// `[general] auto_space`，勾选框：中西文之间自动补空格。
+    AutoSpace,
 
     /// `[general] horizontal_grid`，勾选框：横排时上 / 下键展开成多行矩阵。
     HorizontalGrid,
@@ -246,8 +248,9 @@ impl Setting {
             Self::ChineseFirst => 42,
             Self::Emoji => 62,
             Self::EnglishInChinese => 63,
+            Self::AutoSpace => 65,
             Self::ShiftLetter => 50,
-            Self::SwitchModeShift => 65,
+            Self::SwitchModeShift => 66,
             Self::Theme => 51,
             Self::HorizontalGrid => 57,
             Self::CandidateFontSize => 58,
@@ -322,8 +325,9 @@ impl Setting {
             42 => Self::ChineseFirst,
             62 => Self::Emoji,
             63 => Self::EnglishInChinese,
+            65 => Self::AutoSpace,
             50 => Self::ShiftLetter,
-            65 => Self::SwitchModeShift,
+            66 => Self::SwitchModeShift,
             51 => Self::Theme,
             57 => Self::HorizontalGrid,
             58 => Self::CandidateFontSize,
@@ -434,6 +438,7 @@ mod tests {
             Setting::SystemTextReplacements,
             Setting::ShiftLetter,
             Setting::SwitchModeShift,
+            Setting::AutoSpace,
             Setting::HorizontalGrid,
             Setting::CandidateFontSize,
             Setting::AnnotationFontSize,

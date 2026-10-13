@@ -11,6 +11,7 @@ mod menu;
 mod mode;
 mod next;
 mod processor;
+mod punctuation;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -89,6 +90,9 @@ pub struct TextService {
     /// Ctrl + Alt + Space 切换键当前是否已登记为保留键（`[shortcut] switch_mode` 勾了它时才有）。
     switch_preserved: Cell<bool>,
 
+    /// 已登记的标点切换保留键。
+    punctuation_combo: Cell<Option<KeyCombo>>,
+
     /// 上一次应用过的按键行为设置；与 Server 下发的一致时就不重复应用
     /// （每一拍 `SyncMode` 都带着它，见 [`TextService_Impl::apply_input_settings`]）。
     input_settings: Cell<Option<InputSettings>>,
@@ -105,6 +109,10 @@ pub struct TextService {
 
     /// 宽限过期的「放行」只记一次日志，别每个键都刷一行。
     launch_grace_logged: Cell<bool>,
+
+    /// `OnTestKeyDown` 已问过 Server 的数字键结果；`OnKeyDown` 取走应用，避免再送一次。
+    /// 仅注音等会 Consumed 的数字会进这里；Passthrough 的数字在 Test 里直接放行、不缓存。
+    pending_digit: RefCell<Option<next::Next>>,
 }
 
 thread_local! {
@@ -186,11 +194,13 @@ impl TextService {
             profile_cookie: Cell::new(None),
             translate_combo: Cell::new(None),
             switch_preserved: Cell::new(false),
+            punctuation_combo: Cell::new(None),
             input_settings: Cell::new(None),
             indicator_state: Cell::new(IndicatorState::default()),
             conversion_guard_until: Cell::new(None),
             launch_grace_until: Cell::new(None),
             launch_grace_logged: Cell::new(false),
+            pending_digit: RefCell::new(None),
         }
     }
 }

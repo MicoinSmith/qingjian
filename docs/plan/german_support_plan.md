@@ -39,8 +39,8 @@
 | `apps/linux/server/src/assembly/mod.rs` | 仅 levels 循环数组（L140）加 German；glossary 闭包 code 驱动无需改；`language_model.rs` 与本枚举无关，不改 |
 | `apps/cli/src/args.rs` / `error.rs` | 帮助文本与合法值报错的语言清单加 de |
 | `crates/qingjian-platform/src/config/general.rs` / `mod.rs` | 按西语先例同步清单文案 |
-| **协议版本** | `crates/qingjian-platform/src/protocol/mod.rs` `PROTOCOL_VERSION` 7→8。`Translation.language: Language` 随 `Candidate` 走线上帧，加变体属模块注释明列的「必须 +1 并重装 DLL」情形（西语当年没升是历史疏漏，不照抄） |
-| `apps/linux/fcitx5/src/qingjian.cpp:159`、`tests/transport.cpp:28`、`tests/support/mock.h:48` | 写死的协议号 7→8（共 3 处） |
+| **协议版本** | `crates/qingjian-platform/src/protocol/mod.rs` `PROTOCOL_VERSION` 8→9（0.2.0 发版时已是 8）。`Translation.language: Language` 随 `Candidate` 走线上帧，加变体属模块注释明列的「必须 +1 并重装 DLL」情形（西语当年没升是历史疏漏，不照抄） |
+| `apps/linux/fcitx5/src/qingjian.cpp:159`、`tests/transport.cpp:28`、`tests/support/mock.h:48` | 写死的协议号 8→9（共 3 处） |
 
 Windows 设置页与 mac host 本就「文件不存在的不列」，所以代码可以先于数据合入，无数据时 UI 不出现德语。
 
