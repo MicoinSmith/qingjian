@@ -35,6 +35,9 @@ pub enum InputSource {
 
     /// Tab 接受的云端整句补全。
     CloudSentence,
+
+    /// 语音识别出的一段文字（见 [`crate::Engine::commit_voice`]）。
+    Voice,
 }
 
 impl From<CandidateKind> for InputSource {

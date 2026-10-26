@@ -7,7 +7,7 @@ use super::learning::Learner;
 use super::query::EnglishTail;
 use super::{
     AUTO_WORD_MAX_CHARS, AUTO_WORD_THRESHOLD, AUTO_WORD_THRESHOLD_SAME_BUFFER,
-    EXPLICIT_TRANSITION_WEIGHT, Engine, choice_key, segment_longest_prefix,
+    EXPLICIT_TRANSITION_WEIGHT, Engine, choice_key, reading_key, segment_longest_prefix,
 };
 use crate::candidate::{Candidate, CandidateKind, CandidateList, Language};
 use crate::correction::typo;
@@ -20,6 +20,7 @@ mod last;
 mod transition;
 
 pub(super) use chain::CommitChain;
+pub(super) use last::Choice;
 pub use last::LastCommit;
 pub use transition::Transition;
 
@@ -29,25 +30,27 @@ impl Engine {
         let start = Instant::now();
         let mut hits = 0;
         for candidate in &mut list.items {
-            let mut text = candidate.text.as_str();
-            let traditional_map = self.traditional_map.borrow();
-            if self.traditional
-                && let Some(simp) = traditional_map.get(text)
-            {
-                text = simp.as_str();
-            }
+            // 繁体输出开着时按简体原文查：释义表的键是简体
+            let text = self
+                .traditional
+                .restore(&candidate.text)
+                .unwrap_or_else(|| candidate.text.clone());
             candidate.translation = match candidate.kind {
                 CandidateKind::Custom(_) => None,
                 // 英文候选按敲的大小写显示（Company / COMPANY），释义表键是小写
-                CandidateKind::English => self.english_translator.translate(text).or_else(|| {
+                CandidateKind::English => self.english_translator.translate(&text).or_else(|| {
                     self.english_translator
                         .translate(&text.to_ascii_lowercase())
                 }),
-                _ => self.translator.translate(text).map(|mut translation| {
+                _ => self.translator.translate(&text).map(|mut translation| {
                     self.mark_fresh(&mut translation);
                     translation
                 }),
             };
+            // 中文释义（英文候选的中文译词）也跟着转：候选文本已经是繁体了，释义不能还是简体
+            if let Some(translation) = &mut candidate.translation {
+                self.traditional.apply_translation(translation);
+            }
             hits += usize::from(candidate.translation.is_some());
         }
         AnnotationReport {
@@ -61,31 +64,38 @@ impl Engine {
     ///
     /// 上屏候选的译文而不是候选本身（壳里修饰键 + 数字）：学习、拼音消耗都和选了这个候选一样，
     /// 返回第 `sense` 条释义的译文（0 是第一条，日文不带注音）。候选没有那么多条释义时不动，返回 `None`。
+    /// 译词接在西文词后面时前面补一个空格（`word_space_before`），不看自动空格开没开。
     pub fn commit_translation(&mut self, candidate: &Candidate, sense: usize) -> Option<String> {
         let text = candidate
             .translation
             .as_ref()
             .and_then(|t| t.senses().get(sense))
             .map(|s| s.text.clone())?;
-        let lead = self.auto_space_before(&text);
+        let lead = self.word_space_before(&text) || self.auto_space_before(&text);
         self.commit_with(candidate, InputSource::Translation, Some(sense));
-        let text = if lead { format!(" {text}") } else { text };
-        // 应用里收到的是译文：退格计数与自动空格的上文都按译文算
+        // 应用里收到的是译文：退格计数与自动空格的上文都按译文算；补的空格已单独记成一次直通，这里不再算进去
         if let Some(last) = self.recent_commits.last_mut() {
             last.chars = text.chars().count();
             last.tail = text.chars().last();
         }
-        Some(text)
+        let text = if lead { format!(" {text}") } else { text };
+        Some(self.take_held() + &text)
     }
 
-    /// 候选比输入短时（`kaifazhe` 选了 开发），剩余拼音留在缓冲区，壳应接着 [`Self::query`]。
+    /// 候选比输入短时（`kaifazhe` 选了 开发），剩余拼音留在缓冲区，壳应接着 [`Self::query`]；
+    /// 这时选的词先留在组句里、返回空串，整段选完时连同前面留着的一起返回（见 [`Self::take_held`]）。
     /// 候选的最后一个音节比输入长时（`kaif` 选了 开发），把输入吃完。
     /// 开了自动空格（[`Self::set_auto_space`]）时与上文、候选内部的中西文交界都补好空格。
+    /// 面板开着时上屏的是面板里的条目：记一次使用（私密输入不记），下次打开排进「常用」。
     pub fn commit(&mut self, candidate: &Candidate) -> String {
-        self.panel = None;
+        if self.panel.take().is_some() && !self.private {
+            self.panel_history.record(&candidate.text);
+        }
         let lead = self.auto_space_before(&candidate.text);
+        let before = self.hold_selections.then(|| self.composition.clone());
         let text = self.commit_with(candidate, InputSource::from(candidate.kind), None);
-        if lead { format!(" {text}") } else { text }
+        let text = if lead { format!(" {text}") } else { text };
+        self.hold_or_release(before, text)
     }
 
     /// [`Self::commit`] 的内部形式：`source` 写进输入日志（上屏译词时不是候选本身），
@@ -96,14 +106,17 @@ impl Engine {
         source: InputSource,
         used_sense: Option<usize>,
     ) -> String {
-        let traditional_text = candidate.text.clone();
-        let mut candidate_owned = candidate.clone();
-        if self.traditional
-            && let Some(simp) = self.traditional_map.borrow().get(&candidate_owned.text)
-        {
-            candidate_owned.text = simp.clone();
-        }
-        let candidate = &candidate_owned;
+        // 繁体输出开着时，壳送回来的是繁体候选：先换回简体，下面的学习、历史、日志一律看简体；
+        // 交给应用的仍是 `output` 那份繁体
+        let output = candidate.text.clone();
+        let restored = self
+            .traditional
+            .restore(&candidate.text)
+            .map(|text| Candidate {
+                text,
+                ..candidate.clone()
+            });
+        let candidate = restored.as_ref().unwrap_or(candidate);
         // 整句不是一个词，不记词频；按路径上的词逐条记转移（喂个人 n-gram），路径要在拼音消耗前重算
         let sentence_words = (candidate.kind == CandidateKind::Sentence)
             .then(|| self.sentence_words(candidate))
@@ -118,11 +131,15 @@ impl Engine {
             self.chain.begin_buffer(key);
         }
         let mut typos = Vec::new();
+        // 候选的读音键：按输入串记选择时与字面键各记一份（[`Learner::record_choice`]）。
+        // 形码 / 英文 / emoji 候选没有音节，自然得到空串。
+        let reading = reading_key(candidate.syllables.iter().map(String::as_str));
         let (consumed, input) = match candidate.kind {
             CandidateKind::Chinese => {
                 self.learner.record(candidate);
                 let (consumed, input) = self.consumed_by(candidate);
-                self.learner.record_choice(&input, &candidate.text);
+                self.learner
+                    .record_choice(&input, &reading, &candidate.text);
                 typos = self.accepted_typos(candidate);
                 (consumed, input)
             }
@@ -130,7 +147,8 @@ impl Engine {
             CandidateKind::Code => {
                 self.learner.record(candidate);
                 let (consumed, input) = self.whole_scope();
-                self.learner.record_choice(&input, &candidate.text);
+                self.learner
+                    .record_choice(&input, &reading, &candidate.text);
                 (consumed, input)
             }
             // 英文词带出的 emoji、颜文字、符号没有音节，和英文词一样对应整段作用域
@@ -156,7 +174,8 @@ impl Engine {
                 }
                 self.learner.record(candidate);
                 let (consumed, input) = self.whole_scope();
-                self.learner.record_choice(&input, &candidate.text);
+                self.learner
+                    .record_choice(&input, &reading, &candidate.text);
                 (consumed, input)
             }
             // 模型直接生成的整句没有音节对齐（`yongdockerbushuhenfangbian` 的 `docker` 不是拼音），
@@ -198,7 +217,15 @@ impl Engine {
                     &sense.text,
                     used_sense == Some(index),
                 );
+                self.examples
+                    .note_word(translation.language, &sense.text, &candidate.text);
             }
+            self.record_encounter(&candidate.text, translation, used_sense.unwrap_or(0));
+        } else if matches!(
+            candidate.kind,
+            CandidateKind::Sentence | CandidateKind::Generated
+        ) {
+            self.translate_for_encounter(&candidate.text);
         }
         // 词库里有、释义表里没有的词：交给释义兜底在后台问云端，写进个人释义表，下次就有译词；私密输入中不问
         if matches!(
@@ -270,7 +297,7 @@ impl Engine {
             None
         };
         self.punctuation.note_committed(&candidate.text);
-        self.history.record(&candidate.text);
+        self.note_text(&candidate.text);
         let learned = matches!(
             candidate.kind,
             CandidateKind::Chinese
@@ -284,12 +311,13 @@ impl Engine {
             CandidateKind::Custom(_) | CandidateKind::Shortcut
         );
         let text = if self.auto_space && !verbatim {
-            crate::spacing::space_inner(&traditional_text)
+            crate::spacing::space_inner(&output)
         } else {
-            traditional_text
+            output
         };
         let commit = if learned {
             LastCommit {
+                // 文本是学习键，记简体；字符数按真正上屏的那份算，退格撤销数的是屏幕上的字
                 text: candidate.text.clone(),
                 chars: text.chars().count(),
                 tail: text.chars().last(),
@@ -299,6 +327,14 @@ impl Engine {
                     CandidateKind::Chinese | CandidateKind::Code | CandidateKind::Cloud
                 )
                 .then(|| candidate.text.clone()),
+                choice: matches!(
+                    candidate.kind,
+                    CandidateKind::Chinese | CandidateKind::Code | CandidateKind::Cloud
+                )
+                .then(|| Choice {
+                    reading: reading.clone(),
+                    text: candidate.text.clone(),
+                }),
                 transitions: std::mem::take(&mut self.recording),
                 typos,
                 erased: 0,
@@ -318,7 +354,7 @@ impl Engine {
     /// 一段拼音分几次选完了（`jidiaole` 先选 挤、剩下的走整句 掉了）：这几个词合起来就是用户对这段拼音的答案。
     /// 记一次「整段拼音 → 合成词」的选择；选到 [`AUTO_WORD_THRESHOLD_SAME_BUFFER`] 次、词库里没有、
     /// 不超过 [`AUTO_WORD_MAX_CHARS`] 字就造成用户词，下次整段打出来它直接排第一。返回记下的选择，撤销时退回。
-    pub(super) fn finish_buffer(&mut self) -> Option<(String, String)> {
+    pub(super) fn finish_buffer(&mut self) -> Option<(String, Choice)> {
         let words = self.chain.buffer_words();
         if words.len() < 2 {
             return None;
@@ -330,7 +366,6 @@ impl Engine {
         if key.is_empty() || chars > AUTO_WORD_MAX_CHARS || chars != syllables.len() {
             return None;
         }
-        self.learner.record_choice(&key, &text);
         let candidate = Candidate {
             text,
             kind: CandidateKind::Chinese,
@@ -339,6 +374,8 @@ impl Engine {
             translation: None,
             aux_code: None,
         };
+        let reading = reading_key(candidate.syllables.iter().map(String::as_str));
+        self.learner.record_choice(&key, &reading, &candidate.text);
         if !self.knows_word(&candidate)
             && self.learner.choice_weight(&key, &candidate.text) >= AUTO_WORD_THRESHOLD_SAME_BUFFER
         {
@@ -346,7 +383,13 @@ impl Engine {
             self.learner
                 .learn_word(&candidate.text, &candidate.syllables);
         }
-        Some((key, candidate.text))
+        Some((
+            key,
+            Choice {
+                reading,
+                text: candidate.text,
+            },
+        ))
     }
 
     /// 最近删掉的上屏里有一次是同一段拼音（或它的前缀）、这次却选了别的词：把那次记的学习退回去。
@@ -386,7 +429,10 @@ impl Engine {
         });
         if let Some(chosen) = &last.chosen {
             self.learner.unrecord(chosen);
-            self.learner.unrecord_choice(&last.input, chosen);
+        }
+        if let Some(choice) = &last.choice {
+            self.learner
+                .unrecord_choice(&last.input, &choice.reading, &choice.text);
         }
         for transition in &last.transitions {
             self.learner.unrecord_transition(
@@ -398,8 +444,9 @@ impl Engine {
         for (typed, intended) in &last.typos {
             self.learner.unrecord_typo(typed, intended);
         }
-        if let Some((key, phrase)) = &last.phrase {
-            self.learner.unrecord_choice(key, phrase);
+        if let Some((key, choice)) = &last.phrase {
+            self.learner
+                .unrecord_choice(key, &choice.reading, &choice.text);
         }
     }
 
@@ -407,7 +454,7 @@ impl Engine {
     /// 双拼不记（键与全拼对不上）。
     pub(super) fn accepted_typos(&self, candidate: &Candidate) -> Vec<(String, String)> {
         let keys = self.composition.scope();
-        if self.decode(keys).is_some() {
+        if self.nine_key || self.decode(keys).is_some() {
             return Vec::new();
         }
         match self.active_correction(keys) {
@@ -428,6 +475,9 @@ impl Engine {
         candidate: &Candidate,
     ) -> Option<Vec<sentence::SentenceWord>> {
         let scope = self.composition.scope();
+        if self.nine_key {
+            return self.nine_key_sentence_words(candidate);
+        }
         if self.decode(scope).is_none()
             && let Some(tail) = self.split_english_tail(scope)
             && let Some(words) = self.mixed_words(scope, &tail, &candidate.text)
@@ -472,6 +522,13 @@ impl Engine {
     /// 纠错生效时按纠正后的拼音算，再按那处编辑换算回原串；双拼按解出的全拼算，再换算回键数。
     pub(super) fn consumed_by(&self, candidate: &Candidate) -> (usize, String) {
         let keys = self.composition.scope();
+        // 九宫格：按音节长度消耗，学习键用候选自己的拼音（与全拼共用）
+        if self.nine_key {
+            return (
+                self.nine_key_consumed(candidate),
+                candidate.syllables.concat(),
+            );
+        }
         if let Some(decoded) = self.decode(keys) {
             let pinyin_len = self.align(decoded.pinyin(), &candidate.syllables).consumed;
             return (
@@ -562,8 +619,9 @@ impl Engine {
     }
 
     /// `pos` 处这个音节能看到的输入段（到下一个 `'` 为止）与它的起点（跳过开头的 `'`）。
+    /// 缓冲区本身以 `'` 开头（`shan'gou` 选了 闪 剩下 `'gou`）时也要跳过，否则一个键都吃不掉。
     fn rest_at<'a>(&self, input: &'a str, pos: usize) -> (&'a str, usize) {
-        let start = if pos > 0 && input[pos..].starts_with('\'') {
+        let start = if input[pos..].starts_with('\'') {
             pos + 1
         } else {
             pos

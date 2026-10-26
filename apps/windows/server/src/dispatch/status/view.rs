@@ -22,6 +22,9 @@ pub struct StatusView {
     /// 配置里记住的内容左上角物理像素；`None` 首次按屏幕右下角摆。
     pub anchor: Option<(i32, i32)>,
 
+    /// 大小（百分比，100 为原大），与候选字号无关。
+    pub size: u8,
+
     /// 输入状态，给节点树画法的主题显示（与候选窗口同一份）。
     pub mode: Mode,
 }

@@ -5,7 +5,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use qingjian_core::Engine;
 use qingjian_dictionary::{Dictionary, import};
-use qingjian_platform::Config;
+use qingjian_platform::protocol::{ClientMessage, PROTOCOL_VERSION, SessionId};
+use qingjian_platform::{Config, SwitchKeys};
 
 use super::CONFIG_POLL_INTERVAL;
 use crate::dispatch::{Router, RouterConfig};
@@ -71,6 +72,28 @@ fn edited_config_applies_on_next_tick() {
 }
 
 #[test]
+fn turning_english_mode_off_returns_sessions_to_chinese() {
+    let dir = temp_dir("english");
+    let mut router = watched(&dir, "[general]\ndefault_english = true\n");
+    router.handle(ClientMessage::OpenSession {
+        session: SessionId(1),
+        app: None,
+        protocol: PROTOCOL_VERSION,
+    });
+    assert!(router.sessions[&SessionId(1)].english);
+
+    write_config(
+        &dir.join("config.toml"),
+        "[general]\nenglish_mode = false\ndefault_english = true\n",
+        200,
+    );
+    poll(&mut router);
+    assert!(!router.sessions[&SessionId(1)].english);
+    assert_eq!(router.config.switch_keys(), SwitchKeys::NONE);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn broken_config_keeps_previous_settings() {
     let dir = temp_dir("broken");
     let mut router = watched(&dir, "[general]\npage_size = 6\n");
@@ -108,4 +131,57 @@ fn user_dictionary_import_applies_without_config_change() {
     poll(&mut router);
     assert!(router.engine.extra_dictionaries().is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn cloud_disable_clears_suspended_candidates_and_translation_review() {
+    use crate::dispatch::{composed::Composed, session::SessionInfo, translate::Translation};
+    use qingjian_core::{Candidate, CandidateKind, CandidateLayout};
+    use qingjian_predict::PredictConfig;
+
+    let dir = temp_dir("cloud-disable");
+    let mut router = watched(&dir, "");
+    let local = Candidate {
+        text: "你".into(),
+        kind: CandidateKind::Chinese,
+        syllables: vec!["ni".into()],
+        reading: None,
+        translation: None,
+        aux_code: None,
+    };
+    let composed = || {
+        let mut layout = CandidateLayout::new(vec![local.clone()], 5, 1);
+        let mut cloud = local.clone();
+        cloud.text = "妮".into();
+        cloud.kind = CandidateKind::Cloud;
+        layout.set_cloud(vec![cloud]);
+        Some(Composed::Candidates {
+            preedit: Vec::new(),
+            cursor: 0,
+            layout,
+            spelling: Default::default(),
+            manual_sequence: None,
+        })
+    };
+    router.composed = composed();
+    let mut suspended = SessionInfo::new(None, false);
+    suspended.composed = composed();
+    router.sessions.insert(SessionId(2), suspended);
+    router.translation = Some(Translation { result: None });
+    router.pending_selection = Some((SessionId(1), 7));
+    router.sentence = Some("旧服务补全".into());
+    router.reload_cloud(&PredictConfig::default(), None);
+    assert!(!router.engine.prediction_enabled());
+    assert_eq!(router.config.cloud_slots, 0);
+    assert!(router.translation.is_none());
+    assert!(router.pending_selection.is_none());
+    assert!(router.sentence.is_none());
+    for composed in [&router.composed, &router.sessions[&SessionId(2)].composed] {
+        let Some(Composed::Candidates { layout, .. }) = composed else {
+            panic!("local candidates lost")
+        };
+        assert_eq!(layout.len(), 1);
+        assert_eq!(layout.candidate(0), Some(&local));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

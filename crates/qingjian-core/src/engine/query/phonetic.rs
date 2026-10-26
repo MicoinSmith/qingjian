@@ -1,5 +1,7 @@
 //! 拼音侧的候选生成：切分、拼写纠错、词级查找与排序，再补上整句、英文、快捷与 emoji 候选。
 
+use std::borrow::Cow;
+
 use super::*;
 
 impl Engine {
@@ -46,6 +48,7 @@ impl Engine {
                 }
                 return Ok(Query {
                     segmentations: Vec::new(),
+                    spelled: 0,
                     candidates: CandidateList { items },
                     tail: keys.to_owned(),
                     text: self.composition.text().to_owned(),
@@ -54,8 +57,11 @@ impl Engine {
                     decoded_keys: self.shuangpin.is_some() || self.zhuyin,
                     shuangpin_raw_preedit: self.shuangpin.is_some() && self.shuangpin_raw_preedit,
                     typed_display: decoded.as_ref().map(|d| d.marked()),
+                    typed_case: None,
+                    pinyin_choices: Vec::new(),
                     correction: None,
                     aux: None,
+                    held: String::new(),
                     timings: Timings {
                         parse: start.elapsed(),
                         lookup: Duration::ZERO,
@@ -77,6 +83,11 @@ impl Engine {
             None => (segmentations, tail),
         };
         let parse = start.elapsed();
+        // 注音每个音节敲的声调：词库不带调，查词照旧，只在排序里把对不上的字词往后放。纠错换了切分时不比
+        let tones = match (&decoded, &correction) {
+            (Some(d), None) => d.tones(),
+            _ => Vec::new(),
+        };
 
         let start = Instant::now();
         let mut scored = Vec::new();
@@ -108,6 +119,7 @@ impl Engine {
                     abbreviated,
                     weight: self.learner.weight(hit.text),
                     penalty: expanded.penalty(hit.syllables()),
+                    tone_cost: crate::zhuyin::tone::cost(hit.text, hit.syllables(), &tones),
                 });
             }
             // 输入的前缀也出候选（`kaifazhe` → 开发、开），否则长句没法逐词上屏。
@@ -132,6 +144,7 @@ impl Engine {
                         abbreviated,
                         weight: self.learner.weight(hit.text),
                         penalty: expanded.penalty(hit.syllables()),
+                        tone_cost: crate::zhuyin::tone::cost(hit.text, hit.syllables(), &tones),
                     });
                 }
             }
@@ -153,14 +166,7 @@ impl Engine {
             let choice = letters
                 .get(..covered)
                 .map_or(0, |input| self.learner.choice_weight(input, hit.text));
-            let log_prob = sentence::transition_log_prob(
-                &*self.language_model,
-                self.personal(),
-                self.chain.context(),
-                hit.text,
-                sentence::fallback_log_prob(hit.frequency, log_total),
-            );
-            (choice, log_prob)
+            (choice, self.word_log_prob(hit, log_total))
         });
         // 辅码态：词库候选按码段**反向**过滤（逐个问「有没有以码段开头的码」），无码词直接隐藏；
         // 命中的按「完全匹配码 > 码长降序 > 原词频序」重排（stable sort 保住 rank 排好的原序）。
@@ -175,10 +181,10 @@ impl Engine {
                 } else {
                     None
                 };
-                chinese_candidate(&item, first)
+                chinese_candidate(&item, first.as_deref())
             })),
             Some(code) => {
-                let mut kept: Vec<(usize, &str)> = scored
+                let mut kept: Vec<(usize, Cow<'_, str>)> = scored
                     .iter()
                     .enumerate()
                     .filter_map(|(index, item)| {
@@ -193,12 +199,29 @@ impl Engine {
                 });
                 items.extend(
                     kept.into_iter()
-                        .map(|(index, hit)| chinese_candidate(&scored[index], Some(hit))),
+                        .map(|(index, hit)| chinese_candidate(&scored[index], Some(&hit))),
                 );
             }
         }
         // 附加候选（英文尾段与补全、快捷、整句、emoji）都没有码：辅码筛词时一律不出
         if aux_code.is_none() {
+            // 双拼 / 注音末尾落单的一键是「还没敲完」，不是拼错（`veg` → zhe g…）；词级已有整词
+            // 逐音节对上全部输入（`veg` → 这个）时按中文读法：英文候选不排第一、也不给补全，
+            // 空格不会把整串当英文上屏。全拼的落单字母另有「可能敲反了」的意思，照旧（见 correction）
+            let covered_by_word = decoded.is_some()
+                && correction::trailing_single_letter(segmentations.first())
+                && segmentations.first().is_some_and(|best| {
+                    let patterns = best.patterns();
+                    items.iter().any(|c| {
+                        c.kind == CandidateKind::Chinese
+                            && c.syllables.len() == patterns.len()
+                            && c.syllables
+                                .iter()
+                                .zip(&patterns)
+                                .all(|(syllable, pattern)| pattern.accepts(syllable))
+                    })
+                });
+            let english_unlikely = unlikely && !covered_by_word;
             // 中文优先：整句先进去占第一，英文词紧跟其后（第二）；关掉时英文词先进、整句排在开头的英文后面
             if self.chinese_first {
                 self.insert_sentence(
@@ -208,9 +231,9 @@ impl Engine {
                     english_tail.as_ref().filter(|_| correction.is_none()),
                     head_wins,
                 );
-                self.insert_english(&mut items, unlikely);
+                self.insert_english(&mut items, english_unlikely);
             } else {
-                self.insert_english(&mut items, unlikely);
+                self.insert_english(&mut items, english_unlikely);
                 self.insert_sentence(
                     &mut items,
                     &segmentations,
@@ -219,9 +242,12 @@ impl Engine {
                     head_wins,
                 );
             }
+            // 整句也是中文：英文候选按 `english_min_position` 让位（缺省不限制）
+            self.place_english(&mut items);
             // 快捷候选按敲的键认（`rq` 日期），双拼下也是
             self.insert_shortcuts(&mut items, keys);
             self.insert_emoji(&mut items);
+            self.insert_keyword_shortcuts(&mut items);
         }
         let rank = start.elapsed();
 
@@ -230,13 +256,13 @@ impl Engine {
             .as_ref()
             .filter(|_| head_wins)
             .map_or(tail, |t| &keys[t.head_len..]);
-        let typed_display = decoded.as_ref().map(|d| d.marked()).or_else(|| {
-            // 中文模式下 Shift 敲的大写：匹配按小写算，拼音行仍按敲的样子显示（`Cpan`）
-            (correction.is_none() && self.composition.has_shifted())
-                .then(|| join_marked_typed(&self.composition.typed_scope(), &segmentations, tail))
-        });
+        let typed_display = decoded.as_ref().map(|d| d.marked());
+        let typed_case =
+            (decoded.is_none() && correction.is_none() && self.composition.has_shifted())
+                .then(|| self.composition.typed_scope());
         Ok(Query {
             segmentations,
+            spelled: 0,
             candidates: CandidateList { items },
             tail: tail.to_owned(),
             text: self.composition.text().to_owned(),
@@ -245,8 +271,11 @@ impl Engine {
             decoded_keys: self.shuangpin.is_some() || self.zhuyin,
             shuangpin_raw_preedit: self.shuangpin.is_some() && self.shuangpin_raw_preedit,
             typed_display,
+            typed_case,
+            pinyin_choices: Vec::new(),
             correction,
             aux: self.aux_segment(),
+            held: String::new(),
             timings: Timings {
                 parse,
                 lookup,

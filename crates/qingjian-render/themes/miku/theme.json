@@ -1,7 +1,7 @@
 {
   "extends": "qingjian",
   "schema": 1,
-  "meta": { "id": "miku", "name": "初音未来", "author": "青简", "license": "GPL-3.0-or-later", "appearance": "light" },
+  "meta": { "id": "miku", "name": "初音未来", "author": "青简", "license": "GPL-3.0-or-later AND LicenseRef-PCL", "appearance": "light" },
 
   "variables": {
     "text": "#142c3b",
@@ -15,7 +15,9 @@
     "cyan": "#27c9da",
     "pink": "#f293c5",
     "divider": "#c6eef2",
-    "icon": "#345768"
+    "icon": "#345768",
+    "surface": "#f4fcfd",
+    "accent": "#a9ebef"
   },
 
   "text": {

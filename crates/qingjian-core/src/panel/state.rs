@@ -1,14 +1,19 @@
 //! 打开着的面板：搜索结果（有的话）加内置分类，记着当前分类与每组上次停在哪个分类。
+//! 符号组与表情组的「常用」打开时按用户用过的重排（[`common_items`]），其余分类原样用内置的。
 
 use std::collections::HashMap;
 
-use super::{CATALOG, PanelGroup, PanelSection};
-use crate::candidate::Candidate;
+use super::common::COMMON;
+use super::{CATALOG, PanelGroup, PanelSection, PanelUse, common_items};
+use crate::candidate::{Candidate, CandidateKind};
 
 #[derive(Debug, Clone)]
 pub struct SymbolPanel {
     /// 搜索结果组，没搜到东西时为 `None`。
     search: Option<PanelSection>,
+
+    /// 按用户用过的重排的「常用」分类，顶替内置目录里同组同名的那个。
+    common: Vec<PanelSection>,
 
     /// 当前分类在 [`Self::sections`] 里的下标。
     current: usize,
@@ -18,8 +23,8 @@ pub struct SymbolPanel {
 }
 
 impl SymbolPanel {
-    /// 有搜索结果就停在结果上，否则停在符号组的第一个分类（常用）。
-    pub(crate) fn new(query: &str, results: Vec<Candidate>) -> Self {
+    /// 有搜索结果就停在结果上，否则停在符号组的第一个分类（常用）。`uses` 是面板条目的使用记录。
+    pub(crate) fn new(query: &str, results: Vec<Candidate>, uses: &[PanelUse]) -> Self {
         let search = (!results.is_empty()).then(|| PanelSection {
             group: PanelGroup::Search,
             name: query.to_owned(),
@@ -27,14 +32,22 @@ impl SymbolPanel {
         });
         Self {
             search,
+            common: ranked_common(uses),
             current: 0,
             last: HashMap::new(),
         }
     }
 
-    /// 全部分类：搜索结果在前，然后是内置的。
+    /// 全部分类：搜索结果在前，然后是内置的（「常用」换成重排过的）。
     fn sections(&self) -> impl Iterator<Item = &PanelSection> {
-        self.search.iter().chain(CATALOG.sections.iter())
+        self.search
+            .iter()
+            .chain(CATALOG.sections.iter().map(|builtin| {
+                self.common
+                    .iter()
+                    .find(|s| s.group == builtin.group && s.name == builtin.name)
+                    .unwrap_or(builtin)
+            }))
     }
 
     fn len(&self) -> usize {
@@ -133,10 +146,35 @@ impl SymbolPanel {
     }
 }
 
+/// 符号组与表情组的「常用」按 `uses` 重排；目录里没有的条目（带肤色的 emoji）现做一个候选。
+fn ranked_common(uses: &[PanelUse]) -> Vec<PanelSection> {
+    CATALOG
+        .sections
+        .iter()
+        .filter(|section| section.name == COMMON)
+        .map(|section| PanelSection {
+            group: section.group,
+            name: section.name.clone(),
+            items: common_items(section.group, uses)
+                .into_iter()
+                .map(|text| {
+                    CATALOG.item(&text).cloned().unwrap_or(Candidate {
+                        text,
+                        kind: CandidateKind::Emoji,
+                        syllables: Vec::new(),
+                        reading: None,
+                        translation: None,
+                        aux_code: None,
+                    })
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::candidate::CandidateKind;
 
     fn item(text: &str) -> Candidate {
         Candidate {
@@ -151,7 +189,7 @@ mod tests {
 
     #[test]
     fn opens_on_results_and_cycles_sections_within_a_group() {
-        let mut panel = SymbolPanel::new("jt", vec![item("→")]);
+        let mut panel = SymbolPanel::new("jt", vec![item("→")], &[]);
         assert_eq!(panel.group(), PanelGroup::Search);
         assert_eq!(
             panel.groups(),
@@ -182,8 +220,36 @@ mod tests {
 
     #[test]
     fn without_results_opens_on_common_symbols() {
-        let panel = SymbolPanel::new("x", Vec::new());
+        let panel = SymbolPanel::new("x", Vec::new(), &[]);
         assert_eq!(panel.group(), PanelGroup::Symbols);
         assert_eq!(panel.groups(), [PanelGroup::Symbols, PanelGroup::Emoji]);
+    }
+
+    #[test]
+    fn common_sections_put_used_items_first() {
+        let uses = [
+            PanelUse {
+                item: "★".to_owned(),
+                count: 3,
+                last: 1,
+            },
+            PanelUse {
+                item: "👍🏽".to_owned(),
+                count: 1,
+                last: 2,
+            },
+        ];
+        let mut panel = SymbolPanel::new("", Vec::new(), &uses);
+        assert_eq!(panel.section().name, "常用");
+        assert_eq!(panel.section().items[0].text, "★");
+        assert_eq!(panel.section().items[0].kind, CandidateKind::Symbol);
+        assert!(panel.switch_group(1));
+        assert_eq!(panel.group(), PanelGroup::Emoji);
+        assert_eq!(panel.section().name, "常用");
+        assert_eq!(panel.section().items[0].text, "👍🏽");
+        assert_eq!(panel.section().items[0].kind, CandidateKind::Emoji);
+        // 其余分类照旧是内置的
+        assert!(panel.switch_section(1));
+        assert_ne!(panel.section().name, "常用");
     }
 }

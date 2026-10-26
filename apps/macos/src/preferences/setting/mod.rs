@@ -182,16 +182,16 @@ pub enum Setting {
     /// 第 N 本附加词库的「移除」按钮。
     DictionaryRemove(usize),
 
-    /// `[general] scheme`，弹出菜单：全拼 + 五套双拼 + 大千注音 + 关。
+    /// `[general] scheme`，弹出菜单：全拼 + 九套双拼 + 大千注音 + 关。
     Scheme,
 
     /// `[general] shuangpin_raw_preedit`，勾选框：双拼模式下输入框保留原始输入按键。
     ShuangpinRawPreedit,
 
-    /// `[general] wubi`，勾选框：勾上是五笔（86 版）。与拼音同时开着就是混输。
+    /// `[general] code`，勾选框：勾上是五笔（86 版），取消是关。与拼音同时开着就是混输。
     Wubi,
 
-    /// [general] traditional，勾选框：繁体输出。
+    /// `[general] traditional_variant`，弹出菜单：简体 + 三档繁体。
     Traditional,
 
     /// `[general] log_level`，勾选框：勾上是 debug。
@@ -211,9 +211,6 @@ pub enum Setting {
 
     /// `[apps] english_candidates_on`，勾选框：勾上写缺省白名单，去掉写 `["*"]`（处处都给）。
     EnglishCandidatesOnlyInApps,
-
-    /// `[shortcut] delete_candidate`，快捷键录制按钮（只记修饰键）。
-    DeleteCandidateKeys,
 
     /// `[general] input_log`，勾选框。
     InputLog,
@@ -280,7 +277,6 @@ impl Setting {
             Self::ExportLogs => 48,
             Self::CloudSlots => 24,
             Self::EnglishCandidatesOnlyInApps => 25,
-            Self::DeleteCandidateKeys => 26,
             Self::InputLog => 27,
             Self::Learning => 45,
             Self::ClearInputLog => 28,
@@ -360,7 +356,6 @@ impl Setting {
             48 => Self::ExportLogs,
             24 => Self::CloudSlots,
             25 => Self::EnglishCandidatesOnlyInApps,
-            26 => Self::DeleteCandidateKeys,
             27 => Self::InputLog,
             45 => Self::Learning,
             28 => Self::ClearInputLog,
@@ -446,7 +441,6 @@ mod tests {
             Setting::ExportLogs,
             Setting::CloudSlots,
             Setting::EnglishCandidatesOnlyInApps,
-            Setting::DeleteCandidateKeys,
             Setting::InputLog,
             Setting::SystemTextReplacements,
             Setting::ShiftLetter,

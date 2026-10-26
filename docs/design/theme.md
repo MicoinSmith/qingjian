@@ -1,7 +1,7 @@
 # 主题（预览版）
 
 候选窗口与 Windows 悬浮状态条由青简渲染器（`crates/qingjian-render`）按主题画成位图，mac 与 Windows 用同一个渲染器、同一份主题，画出来逐像素一致。
-这里记格式全貌与实现，写给维护的人；用户怎么写主题见 `docs/user/settings/themes.md`。本文只写已经做到的，做不到的列在末尾「预览版的限制」。
+这里记格式全貌与实现，写给维护的人；用户怎么写主题见 `docs/user/advanced/custom-themes.md`。本文只写已经做到的，做不到的列在末尾「预览版的限制」。
 
 ## 主题文件
 
@@ -35,6 +35,7 @@
 | `components` | 可复用的节点，`use` / `repeat` 按名字引用 |
 | `windows` | `vertical` / `horizontal` 两个根节点，按用户选的排布取一个 |
 | `status` | 悬浮状态条（只有 Windows 有）：字体、内边距、圆角、各处颜色、`effects`，排法固定；写了 `root` 就按节点树画（见「状态条」） |
+| `keyboard` | 双拼键位提示的键盘：键名与小字的字体、键的宽高与间距、圆角、各状态（平常 / 刚敲下 / 能接 / 拼不出）的填充与文字颜色、`effects`，排法固定（三排错位）；整块跟着候选字比例缩放，透明度由壳设在窗口上 |
 
 节点：
 
@@ -65,8 +66,9 @@
   Windows 由 Router 现算（与状态条同一来源），经 `CandidateSink::show` 交给 UI 线程，不进 Server ↔ DLL 协议。方案名 `qingjian_platform::scheme_name`：同状态条的 `scheme_label`，单开全拼时也写「全拼」。
 - **设置里的字号**：`[general] candidate_font_size` / `annotation_font_size`（0 用主题的，不限范围）由壳经 `Theme::with_text_sizes` 盖到主题上：
   `candidate` 与 `annotation` 换成设置的字号，行高同比例；`index`、`preedit` 与表格 `row_height` 按候选字的比例缩放（`theme/text_sizes.rs`）。
+  节点里在样式上写死的字号（`{ "base": "candidate", "size": 19 }`，手机候选条这样写）也按那个样式的比例缩放。
   表格行高是下限（`minmax(row_height, auto)`），内容更高时撑开。
-  状态条不逐个样式改字号：`render_status` 去掉设置的字号，把整条的倍数乘上候选字的比例，文字、图标、边距、点击边界一起缩放。
+  状态条不跟设置的字号：`render_status` 去掉设置的字号按主题原样画，大小由壳按 `[status_bar] size` 乘进整条的倍数（文字、图标、边距、点击边界一起缩放）。
 - **状态条**：`status.root` 是一棵与候选窗口同写法的节点树，`repeat` 绑定 `cells` 展开格子（Windows 现在是模式、标点、齿轮三格）。
   格子里的条件 `emphasized`（当前模式、生效的全角标点）、`gear`、`first`、`last`，文字绑定 `text`；整条能用 `mode.*`（`Renderer::render_status` 收一份 `Mode`，Windows 的 `StatusView` 带着，与候选窗口同一个 `Router::input_mode`）。
   点击按格：每格第一个产出的节点的右边界（根坐标），没画出来的格同前一格，最后一格延到内容右边；格子之间的装饰算前一格（`renderer/status/tree.rs`）。
@@ -121,6 +123,16 @@
 - **局部重画**：循环动画用脏矩形（`renderer/partial.rs`）：动画节点把树序切成几段，不动的各段画进图层缓存，每帧只在动画节点上一帧与这一帧占的区域里按原先后叠「段、动画节点、段……」，
   与整张重画只差半透明叠加的取整（测得最多 3 / 255）。动画节点的上级有半透明容器、拿子节点当阴影形状的容器或别的动画节点，或同时有过渡在播时，退回整张重画。
   效果遮罩与图片填充的框按「节点 + 位置大小 + 画布大小」缓存（`scene/cache_key.rs`）；九宫格里原图同色的格子按纯色填。
+
+### 手机键盘
+
+手机候选条用窗口模板 `windows.strip`（青简绿里写、其余主题经 `extends` 继承），键盘本身不由主题文件描述：配色从颜色变量推出来（`theme/keyboard.rs` 的 `KeyboardColors`），新主题手机上自动有一套，Android 壳只照着用、不另写颜色。
+
+- 键面取 `surface`（叠在白 / 黑上成不透明）；按下与首选高亮取 `accent` 叠在键面上；文字取 `text` / `gloss` / `faint` / `fresh` / `cloud`。缺的变量用青简绿的值。
+- 深浅按键面亮度判断（不看外观设置），锁定浅色的主题在深色模式下仍是浅色键盘。
+- 底板与功能键：浅色是键面掺一点 `accent` 的色相再压暗（底板 8% 色相、6% 黑，功能键 12%、13%）；深色是键面提亮 8% 当键面，底板压暗 35%，功能键只掺色相。
+- 回车键（品牌色）：`accent` 去掉不透明度后保持色相与饱和度，按 HSL 亮度调暗到白字对比度 ≥ 3.5。
+- 只换整体样子的角色主题（樱花、大肥鱼、初音未来、波奇酱）高亮写死在组件里，为了候选条与键盘也是这个主题的颜色，各自补了 `surface` 与 `accent` 变量（桌面窗口不用这两个变量，画法不变）。
 
 ## 实现
 

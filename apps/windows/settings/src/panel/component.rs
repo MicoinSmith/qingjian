@@ -2,10 +2,15 @@
 
 use qingjian_platform::{
     Appearance, CandidateRenderer, Config, DEFAULT_ENGLISH_CANDIDATES_ON_WINDOWS, EmojiCount,
-    HighlightKeys, LayoutMode, LogLevel, PreeditMode, ShiftLetter, UpdateChannel,
+    HighlightKeys, LayoutMode, LogLevel, NumpadDigit, PreeditMode, ShiftLetter, UpdateChannel,
 };
 use qingjian_render::ThemeLibrary;
-use windows_reactor::*;
+use windows_reactor::{
+    Component, ComponentContext, ElementRef, KeyedView, NavigationView,
+    NavigationViewBackButtonVisible, NavigationViewItem, NavigationViewItemSlot,
+    NavigationViewPaneDisplayMode, NavigationViewSlot, SlotView, SlotsControl, Symbol, SymbolIcon,
+    View, ViewContext,
+};
 
 use super::cloud_status::CloudStatus;
 use super::controls::{export_logs, log_dir, open_in_editor, open_with_explorer};
@@ -54,6 +59,7 @@ impl Component for Settings {
             Message::LearningLanguage(Some(i)) if i < general::LANGUAGES.len() => {
                 self.save("general", "learning_language", general::LANGUAGES[i].1);
             }
+            Message::TranslationPos(on) => self.save("general", "translation_pos", on),
             Message::PageSize(Some(value)) => {
                 let size = (value.round() as i64).clamp(1, 9);
                 self.save("general", "page_size", size);
@@ -62,8 +68,18 @@ impl Component for Settings {
                 self.save("general", "scheme", general::SCHEMES[i].1);
             }
             Message::ShuangpinRawPreedit(on) => self.save("general", "shuangpin_raw_preedit", on),
-            Message::Wubi(on) => self.save("general", "wubi", if on { "wubi86" } else { "" }),
-            Message::Traditional(on) => self.save("general", "traditional", on),
+            Message::Wubi(on) => self.save(
+                "general",
+                "code",
+                if on {
+                    qingjian_platform::code_schemes::WUBI86
+                } else {
+                    "off"
+                },
+            ),
+            Message::Traditional(Some(i)) if i < general::TRADITIONAL.len() => {
+                self.save("general", "traditional_variant", general::TRADITIONAL[i].1);
+            }
             Message::Emoji(Some(count)) if count <= usize::from(EmojiCount::MAX) => {
                 self.save("general", "emoji", count as i64);
             }
@@ -76,6 +92,9 @@ impl Component for Settings {
             Message::EnglishCandidates(on) => self.save("general", "english_candidates", on),
             Message::EnglishInChinese(on) => self.save("general", "english_in_chinese", on),
             Message::ChineseFirst(on) => self.save("general", "chinese_first", on),
+            Message::NumpadDigit(Some(i)) if i < NumpadDigit::ALL.len() => {
+                self.save("general", "numpad_digit", NumpadDigit::ALL[i].key());
+            }
             Message::FullWidthPunctuation(on) => {
                 self.save("general", "full_width_punctuation", on);
             }
@@ -125,6 +144,9 @@ impl Component for Settings {
             Message::Layout(Some(i)) if i < LayoutMode::ALL.len() => {
                 self.save("general", "layout", LayoutMode::ALL[i].key());
             }
+            Message::HorizontalGrid(on) => {
+                self.save("general", "horizontal_grid", on);
+            }
             Message::Preedit(Some(i)) if i < PreeditMode::ALL.len() => {
                 self.save("general", "preedit", PreeditMode::ALL[i].key());
             }
@@ -169,6 +191,21 @@ impl Component for Settings {
             // 云服务页
             Message::LocalModel(on) => self.save("model", "enabled", on),
             Message::CloudEnabled(on) => self.save("predict", "enabled", on),
+            Message::CloudAutomatic(on) => self.save("predict", "automatic", on),
+            Message::CloudDebounce(Some(value)) => {
+                self.save(
+                    "predict",
+                    "debounce_ms",
+                    (value.round() as i64).clamp(100, 10000),
+                );
+            }
+            Message::CloudMinInterval(Some(value)) => {
+                self.save(
+                    "predict",
+                    "min_interval_ms",
+                    (value.round() as i64).clamp(1000, 60000),
+                );
+            }
             Message::CloudApiKey(value) => self.save("predict", "api_key", value),
             Message::CloudModel(value) => self.save("predict", "model", value),
             Message::CloudBaseUrl(value) => self.save("predict", "base_url", value),
@@ -177,14 +214,18 @@ impl Component for Settings {
                 self.save("predict", "slots", slots);
             }
             Message::CloudSentence(on) => self.save("predict", "sentence", on),
+            Message::CloudSentenceTranslation(on) => {
+                self.save("predict", "sentence_translation", on)
+            }
             Message::TestConnection => {
                 if matches!(self.cloud_status, CloudStatus::Testing) {
                     return;
                 }
                 self.cloud_status = CloudStatus::Testing;
                 let config = self.config.predict.clone();
+                let usage_path = self.data_dir().join(qingjian_predict::API_USAGE_FILE);
                 context.spawn_background(move |cancel| {
-                    Message::CloudTestDone(cloud::run_test(&config, &cancel))
+                    Message::CloudTestDone(cloud::run_test(&config, usage_path, &cancel))
                 });
             }
             Message::CloudTestDone(result) => {
@@ -224,13 +265,15 @@ impl Component for Settings {
             Message::TranslationSecond(Some(i)) if i < shortcut::MODIFIERS.len() => {
                 self.save("shortcut", "translation_second", shortcut::MODIFIERS[i].1);
             }
-            Message::DeleteCandidate(Some(i)) if i < shortcut::MODIFIERS.len() => {
-                self.save("shortcut", "delete_candidate", shortcut::MODIFIERS[i].1);
-            }
             Message::TranslateSelection(Some(i)) if i < shortcut::MODIFIERS.len() => {
                 let key = self.config.shortcut.translate_selection.key;
                 let combo = format!("{}+{key}", shortcut::MODIFIERS[i].1);
                 self.save("shortcut", "translate_selection", combo);
+            }
+            Message::PredictShortcut(Some(i)) if i < shortcut::MODIFIERS.len() => {
+                let key = self.config.shortcut.predict.key;
+                let combo = format!("{}+{key}", shortcut::MODIFIERS[i].1);
+                self.save("shortcut", "predict", combo);
             }
 
             // 模糊音页
@@ -364,7 +407,7 @@ impl Component for Settings {
     }
 
     fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
-        context.window_title("青简设置");
+        context.window_title("青简旧版设置");
         let item = |tag: &str, label: &str, symbol| {
             KeyedView::new(
                 tag,

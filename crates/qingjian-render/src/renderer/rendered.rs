@@ -1,6 +1,6 @@
 //! 渲染结果：位图加内容区（阴影边之外的那块）的位置。
 
-use tiny_skia::Pixmap;
+use bamboo_slip::{Painted, Pixmap};
 
 use super::{HitRegion, HitTarget};
 
@@ -29,6 +29,19 @@ pub struct Rendered {
 }
 
 impl Rendered {
+    pub(crate) fn new(painted: Painted, hits: Vec<HitRegion>) -> Self {
+        Self {
+            pixmap: painted.pixmap,
+            content_x: painted.content_x,
+            content_y: painted.content_y,
+            content_width: painted.content_width,
+            content_height: painted.content_height,
+            scale: painted.scale,
+            next_frame: painted.next_frame,
+            hits,
+        }
+    }
+
     /// 内容区里一点（点，左上为原点）点中了什么。
     pub fn hit_at(&self, x: f32, y: f32) -> Option<HitTarget> {
         let (x, y) = (x * self.scale, y * self.scale);
@@ -36,6 +49,21 @@ impl Rendered {
             .iter()
             .find(|region| region.contains(x, y))
             .map(|region| region.target)
+    }
+
+    /// 候选最上沿在位图里的像素纵坐标；没有候选时是位图高。候选条的壳以它为界：上面的拼音行钉住，下面的候选随滚动。
+    pub fn candidates_top(&self) -> u32 {
+        let top = self
+            .hits
+            .iter()
+            .filter(|region| matches!(region.target, HitTarget::Candidate(_)))
+            .map(|region| region.y)
+            .fold(f32::INFINITY, f32::min);
+        if top.is_finite() {
+            self.content_y + top.max(0.0) as u32
+        } else {
+            self.pixmap.height()
+        }
     }
 
     /// 内容区宽高换回点。

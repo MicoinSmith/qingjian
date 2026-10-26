@@ -40,7 +40,7 @@ fn row(row: &Row) -> qingjian_render::Row {
     qingjian_render::Row {
         index: row.index.clone(),
         text: row.text.clone(),
-        code: None,
+        code: row.code.clone(),
         annotation: row
             .annotation
             .iter()

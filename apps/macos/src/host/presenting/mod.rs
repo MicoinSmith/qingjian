@@ -1,29 +1,60 @@
-//! 呈现：删候选、按应用关英文候选、翻译选区的起止、提示气泡、会话重置与候选窗口绘制。
+//! 呈现：候选右键菜单、按应用关英文候选、翻译选区的起止、提示气泡、会话重置与候选窗口绘制。
 
+mod key_hint;
 mod notice;
 mod panel;
 mod translation_job;
 
+pub(super) use key_hint::KeyHintState;
 pub(super) use notice::Notice;
 pub use translation_job::TranslationJob;
 
 use super::cloud::cloud_candidate;
 use super::*;
+use qingjian_core::TraditionalVariant;
+use qingjian_core::candidate::arrows::Focus;
+use qingjian_platform::candidate_menu::{self, CandidateAction};
 
 impl Host {
-    /// 删掉当前页第 `offset` 格的候选：用户词整个删、词库词清学习。返回给用户看的一句话；那格没有候选返回 `None`。
-    pub fn forget_candidate(&mut self, offset: usize) -> Option<String> {
-        let index = self.session.index_on_page(offset)?;
+    /// 右键菜单：视图里第 `offset` 格的候选能做哪几件事；那格没有候选给空。
+    pub fn candidate_actions(&self, offset: usize) -> Vec<CandidateAction> {
+        let Some(candidate) = self
+            .session
+            .index_in_view(offset)
+            .and_then(|index| self.session.candidate(index))
+        else {
+            return Vec::new();
+        };
+        candidate_menu::actions(
+            &self.engine,
+            &candidate,
+            &self.settings.config().custom_phrases,
+        )
+    }
+
+    /// 做右键菜单里的一项，返回给用户看的一句话；那格没有候选返回 `None`。
+    /// 置顶 / 取消置顶改了配置里的短语，重读配置推给 Engine。
+    pub fn perform_candidate_action(
+        &mut self,
+        offset: usize,
+        action: CandidateAction,
+    ) -> Option<String> {
+        let index = self.session.index_in_view(offset)?;
         let candidate = self.session.candidate(index)?;
-        let forgotten = self.engine.forget(&candidate);
-        let text = &candidate.text;
-        Some(if forgotten.user_word {
-            format!("已删除用户词「{text}」")
-        } else if forgotten.learning {
-            format!("已忘掉对「{text}」的学习记录")
-        } else {
-            format!("「{text}」是词库里的词，也没有学习记录，没什么可删")
-        })
+        let phrases = self.settings.config().custom_phrases.clone();
+        let path = self.settings.path().map(|path| path.to_path_buf());
+        let outcome = candidate_menu::perform(
+            action,
+            &mut self.engine,
+            &candidate,
+            path.as_deref(),
+            &phrases,
+        );
+        if outcome.phrases_changed {
+            self.settings.reload();
+            self.apply_config(false);
+        }
+        Some(outcome.notice)
     }
 
     /// 这个应用里英文模式给不给候选：全局开关开着，且应用在 `[apps] english_candidates_on` 白名单里。
@@ -38,7 +69,7 @@ impl Host {
             result: None,
         });
         self.reset_session(None, vec![cloud_candidate("翻译中…".to_owned())]);
-        self.await_prediction();
+        self.await_prediction(None);
         self.render();
     }
 
@@ -68,10 +99,19 @@ impl Host {
         }
     }
 
-    /// 横排矩阵这套按键是否生效：开关开着（`[general] horizontal_grid`）、排布是横排，而且在用系统绘制。
-    /// 青简渲染器还没有矩阵窗口，用它时不展开，横排照单行走（见 `docs/notes/crate-notes.md`）。
+    /// 横排矩阵这套按键是否生效：开关开着（`[general] horizontal_grid`）、排布是横排。
     pub fn grid_keys(&self) -> bool {
-        self.horizontal_grid && self.layout == LayoutMode::Horizontal && !self.window.uses_bitmap()
+        self.horizontal_grid && self.layout == LayoutMode::Horizontal
+    }
+
+    /// `←` / `→` 归候选：横排矩阵开着，或高亮移动键选了 `←` / `→`。
+    pub fn arrows_move_cells(&self) -> bool {
+        self.grid_keys() || self.highlight_keys == HighlightKeys::LeftRight
+    }
+
+    /// 方向键分拼音行与候选两区（Core 的 `arrows::route`）：横排，而且高亮移动键选了 `←` / `→`。
+    pub fn two_area_arrows(&self) -> bool {
+        self.layout == LayoutMode::Horizontal && self.highlight_keys == HighlightKeys::LeftRight
     }
 
     /// 新一轮候选：每页格数取配置与窗口能画的行数中较小者，云端槽位数取配置。
@@ -82,12 +122,36 @@ impl Host {
             .reset(preedit, candidates, page_size, self.cloud_slots);
     }
 
+    /// 拼音行跟着高亮候选：按它的读音重切（`ganga` 高亮 尴尬 是 `gan'ga`），带调拼音开着时窗口里标声调。
+    /// 切法变了返回应用里 marked text（不带调）的新文本与光标。
+    pub fn follow_highlight(&mut self) -> Option<(String, usize)> {
+        if self.engine.symbol_panel().is_some() {
+            return None;
+        }
+        let Session {
+            layout,
+            highlighted,
+            spelling,
+            preedit,
+            ..
+        } = &mut self.session;
+        let query = spelling.as_mut()?;
+        let candidate = layout.candidate(*highlighted);
+        let before = query.spelled;
+        query.follow(candidate);
+        let toned = candidate.and_then(|c| self.engine.toned_syllables(c));
+        let (segments, cursor) = query.window_segments(toned.as_deref());
+        *preedit = Preedit::from_marked(&segments, cursor);
+        (query.spelled != before).then(|| (query.marked_text(), query.marked_cursor()))
+    }
+
     /// 按会话状态画候选窗口。候选为空且没有 preedit 时收窗。
     pub fn render(&mut self) {
         if self.engine.symbol_panel().is_some() {
             self.render_panel();
             return;
         }
+        let keyboard = self.key_hint_keyboard();
         let size = self.session.layout.page_size();
         let page = self.session.page;
         // 横排展开成矩阵时画视口里的几行，序号只标在高亮所在那一行（数字键选的就是它）；单行时只画当前页
@@ -113,11 +177,17 @@ impl Host {
                         // 矩阵里的空位什么都不画；单行里的空位留着序号
                         index: if columns == 0 { index } else { String::new() },
                         text: String::new(),
+                        code: None,
                         annotation: Vec::new(),
                         cloud: false,
                     };
                 };
-                let mut row = Row::from_candidate(offset, candidate);
+                let mut row = Row::from_candidate(
+                    offset,
+                    candidate,
+                    self.translation_pos,
+                    self.aux_code_show,
+                );
                 row.index = index;
                 row.cloud = candidate.kind == CandidateKind::Cloud;
                 row
@@ -138,10 +208,16 @@ impl Host {
         }
         let pages = self.session.pages();
         let footer = (pages > 1).then(|| format!("{}/{pages}", page + 1));
+        // 方向键在拼音行里时候选不画高亮，空格照样上屏原来高亮的那个
+        let in_pinyin = self.two_area_arrows() && self.session.focus == Focus::Pinyin;
         let frame = Frame {
             preedit,
             rows,
-            highlighted: self.session.highlighted.saturating_sub(first),
+            highlighted: if in_pinyin {
+                usize::MAX
+            } else {
+                self.session.highlighted.saturating_sub(first)
+            },
             columns,
             column_ems: if columns > 0 {
                 qingjian_core::Grid::column_ems(&self.session.layout)
@@ -153,6 +229,7 @@ impl Host {
             status: self.status.clone(),
             mode: self.input_mode(),
             panel: None,
+            keyboard,
         };
         self.window.show(frame, self.anchor);
     }
@@ -163,9 +240,9 @@ impl Host {
         let english = self.english_mode();
         qingjian_render::Mode {
             english,
-            traditional: general.traditional,
+            traditional: general.traditional() != TraditionalVariant::Off,
             full_width: !english && general.full_width_punctuation,
-            scheme: qingjian_platform::scheme_name(general.scheme(), general.wubi()),
+            scheme: self.scheme_slot.scheme_name(general.scheme()),
         }
     }
 }

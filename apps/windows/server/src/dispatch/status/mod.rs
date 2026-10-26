@@ -8,7 +8,7 @@ mod sink;
 mod view;
 
 use qingjian_platform::protocol::{IndicatorCommand, SessionId};
-use qingjian_platform::{Config, Scheme, scheme_label};
+use qingjian_platform::{Config, Scheme};
 
 pub use self::event::StatusEvent;
 pub use self::sink::{NoopStatusSink, StatusSink};
@@ -68,6 +68,10 @@ impl Router {
                 tracing::debug!(english, full_width, "状态条：切换全角标点");
                 self.persist("general", key, full_width);
             }
+            StatusEvent::OpenSymbolPanel => {
+                tracing::debug!("状态条：打开符号面板");
+                self.open_panel_for(self.mode_session);
+            }
             StatusEvent::Moved(x, y) => {
                 self.config.status_pos = Some((x, y));
                 self.persist("status_bar", "x", i64::from(x));
@@ -89,7 +93,9 @@ impl Router {
                 self.reconcile_status();
             }
             IndicatorCommand::OpenSettings => self.status.open_settings(),
+            IndicatorCommand::OpenLegacySettings => self.status.open_legacy_settings(),
             IndicatorCommand::OpenDownload => self.status.open_download(),
+            IndicatorCommand::OpenSymbolPanel => self.open_panel_for(self.mode_session),
         }
     }
 
@@ -119,12 +125,12 @@ impl Router {
                 self.status.show_status(StatusView {
                     english,
                     zhuyin: self.config.scheme == Scheme::Zhuyin,
-                    // 现算，不存下来：存了会与 scheme / wubi 冗余、手搓配置的地方就漂移
-                    scheme: Some(scheme_label(self.config.scheme, self.config.wubi))
+                    scheme: Some(self.scheme_slot.scheme_label(self.config.scheme))
                         .filter(|label| !label.is_empty()),
                     full_width: self.full_width_for(english),
                     appearance: self.config.appearance,
                     anchor: self.config.status_pos,
+                    size: self.config.status_size,
                     mode: self.input_mode(),
                 });
             }

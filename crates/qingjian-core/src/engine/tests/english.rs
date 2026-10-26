@@ -39,7 +39,9 @@ fn english_word_ranks_first_when_input_is_unlikely_pinyin() {
 fn usage_meter_counts_hanzi_words_and_english_words_per_commit() {
     let recorded = Arc::new(Mutex::new(Vec::new()));
     let mut engine = engine().with_usage_meter(Box::new(MemoryMeter(recorded.clone())));
-    engine.set_input("kaifa");
+    engine.set_input("kaifx");
+    engine.backspace();
+    engine.push('a');
     let kaifa = engine.query().unwrap().candidates.items[0].clone();
     assert_eq!(kaifa.text, "开发");
     engine.commit(&kaifa);
@@ -49,19 +51,50 @@ fn usage_meter_counts_hanzi_words_and_english_words_per_commit() {
     engine.set_input("gist");
     engine.take_raw();
     let recorded = recorded.lock().unwrap();
+    // 选的首选，敲了 6 键、中间删过一次
+    let typing_ms = recorded[0].typing_ms;
     assert_eq!(
         recorded[0],
         Usage {
             hanzi: 2,
             words: 1,
             english_words: 0,
-            commits: 1
+            commits: 1,
+            choices: 1,
+            first_choices: 1,
+            typed_hanzi: 2,
+            keys: 6,
+            typing_ms,
+            edited: 1,
         }
     );
+    // 原样上屏不算选词，键数时长都不记
+    assert_eq!(recorded[1].choices, 0);
+    assert_eq!(recorded[1].keys, 0);
     assert_eq!(recorded[1].english_words, 0);
     assert_eq!(recorded[1].commits, 1);
     assert_eq!(recorded[2].english_words, 1);
     assert_eq!(recorded.len(), 3);
+}
+
+#[test]
+fn unmetered_commits_are_not_counted_and_do_not_leak_keys() {
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let mut engine = engine().with_usage_meter(Box::new(MemoryMeter(recorded.clone())));
+    // 壳的工具框（快捷翻译的原文）里打的不算
+    engine.set_metered(false);
+    engine.set_input("kaifa");
+    let kaifa = engine.query().unwrap().candidates.items[0].clone();
+    engine.commit(&kaifa);
+    assert!(recorded.lock().unwrap().is_empty());
+    // 回到应用里接着打：键数只算这一段的
+    engine.set_metered(true);
+    engine.set_input("kaifa");
+    let again = engine.query().unwrap().candidates.items[0].clone();
+    engine.commit(&again);
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].keys, 5);
 }
 
 #[test]
@@ -237,6 +270,95 @@ fn english_in_chinese_off_drops_words_and_completions_but_not_english_mode() {
     engine.set_english_mode(true);
     engine.set_input("comp");
     assert_eq!(texts_of(&engine), ["company", "compare"]);
+}
+
+/// 关掉「打拼音时也给英文词」后英文词连句尾都不参与分词（#766）：
+/// `nanine` 不再切成 `na` + `nine`，`nine` 也不再读成英文词。
+#[test]
+fn english_in_chinese_off_stops_the_english_tail() {
+    const DICT: &str = "那\tna\t300000\n你\tni\t400000\n呢\tne\t200000\n那你呢\tna ni ne\t500000\n";
+    let build = || {
+        let words = WordList::parse("nine\tnine\t4500\nrust\trust\t3740\n").unwrap();
+        Engine::new(Dictionary::parse(DICT).unwrap()).with_english(words)
+    };
+
+    // 开着时与 issue 的复现一致：整句把 nine 当英文尾段
+    let mut on = build();
+    on.set_input("nanine");
+    assert_eq!(texts_of(&on)[0], "那nine");
+
+    let mut off = build();
+    off.set_english_in_chinese(false);
+    off.set_input("nanine");
+    let all = texts_of(&off);
+    assert_eq!(all[0], "那你呢");
+    assert!(!all.iter().any(|text| text.contains("nine")), "{all:?}");
+    // 单独打 nine 也回到拼音读法
+    off.set_input("nine");
+    let all = texts_of(&off);
+    assert!(
+        !all.iter().any(|text| text.eq_ignore_ascii_case("nine")),
+        "{all:?}"
+    );
+}
+
+#[test]
+fn english_candidate_count_stops_at_the_configured_limit() {
+    let words =
+        WordList::parse("company\tcompany\t5600\ncompare\tcompare\t4450\ncompass\tcompass\t3000\n")
+            .unwrap();
+    let mut engine = engine().with_english(words);
+    engine.set_input("compa");
+    // 缺省 4：一条精确词都没有时补全仍按老样子最多 3 条
+    assert_eq!(texts_of(&engine)[..3], ["company", "compare", "compass"]);
+    engine.set_english_max_in_chinese(2);
+    let all = texts_of(&engine);
+    assert_eq!(
+        all.iter()
+            .filter(|text| ["company", "compare", "compass"].contains(&text.as_str()))
+            .count(),
+        2
+    );
+    // 1 只留最靠前的一条；0 越界收到 1
+    engine.set_english_max_in_chinese(0);
+    let all = texts_of(&engine);
+    assert_eq!(
+        all.iter()
+            .filter(|text| ["company", "compare", "compass"].contains(&text.as_str()))
+            .count(),
+        1
+    );
+    // 整段就是精确词时，1 也只留它
+    engine.set_input("company");
+    engine.set_english_max_in_chinese(1);
+    assert_eq!(
+        texts_of(&engine)
+            .iter()
+            .filter(|text| ["company", "compare", "compass"].contains(&text.as_str()))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn english_min_position_keeps_chinese_candidates_above() {
+    const DICT: &str = "吃\tchi\t5000\n拿\tna\t5000\n吃拿\tchi na\t6000\n";
+    let words = WordList::parse("china\tchina\t5000\nGitHub\tgithub\t3000\n").unwrap();
+    let mut engine = Engine::new(Dictionary::parse(DICT).unwrap()).with_english(words);
+    engine.set_input("china");
+    // 缺省不限制：英文词跟在第一个中文候选后面
+    let all = texts_of(&engine);
+    let english = all.iter().position(|text| text == "china").unwrap();
+    assert!(english < 2, "{all:?}");
+    // 中文候选够多时，英文最高排到第 3 位
+    engine.set_english_min_position(3);
+    let all = texts_of(&engine);
+    assert_eq!(all[2], "china", "{all:?}");
+    assert!(all[..2].iter().all(|text| text != "china"));
+    // 没有中文候选时仍排第一
+    engine.set_english_min_position(9);
+    engine.set_input("github");
+    assert_eq!(texts_of(&engine)[0], "GitHub");
 }
 
 #[test]
@@ -648,4 +770,49 @@ fn a_long_raw_commit_with_english_in_the_middle_is_not_learned() {
         vec!["kubectl".to_owned()],
         "只有真正像一个词的才该进个人英文词表"
     );
+}
+
+/// 末位落单声母正好是英文词的最后一个字母时（`henhaobook`），英文词内部换位凑出的残尾拼音
+/// （`book` → `…o/bo/k…`）不得被当成拼写纠正：落单声母进词图后原样多读一个位置，残尾对残尾
+/// 就能靠字频赢过原样，把「拼音头 + 英文词」整条挤掉（很好book 退化成 很好哦伯克）。见 #619。
+#[test]
+fn an_unfinished_correction_does_not_push_the_english_tail_away() {
+    let dictionary = Dictionary::parse(
+        "很好\then hao\t900000\n很\then\t800000\n好\thao\t800000\n\
+         波\tbo\t5000\n哦\to\t100\n口\tkou\t5000\n空\tkong\t5000\n克\tke\t5000\n",
+    )
+    .unwrap();
+    let words = WordList::parse("book\tbook\t5000\n").unwrap();
+    let mut engine = Engine::new(dictionary).with_english(words);
+    engine.set_input("henhaobook");
+    let query = engine.query().unwrap();
+    assert!(query.correction.is_none(), "残尾换位不该触发拼写纠正");
+    assert_eq!(query.candidates.items[0].text, "很好book");
+    assert_eq!(query.candidates.items[0].kind, CandidateKind::Sentence);
+}
+
+#[test]
+fn english_word_is_not_buried_by_reading_key_choices() {
+    // `wenti` 下选的 问题（读音键记了一份）不能隔着 `went` 把英文词顶下去：
+    // 英文位置的仲裁按字面键数，读音键泛化只服务中文自己的重打排序
+    let dictionary = Dictionary::parse("问题\twen ti\t900000\n").unwrap();
+    let words = WordList::parse("went\twent\t2000\n").unwrap();
+    let mut engine = Engine::new(dictionary)
+        .with_english(words)
+        .with_learner(Box::new(CountingLearner(HashMap::new())));
+    let commit = |engine: &mut Engine, input: &str, text: &str| {
+        engine.set_input(input);
+        let candidate = engine
+            .query()
+            .unwrap()
+            .candidates
+            .items
+            .into_iter()
+            .find(|c| c.text == text)
+            .unwrap();
+        engine.commit(&candidate);
+    };
+    commit(&mut engine, "wenti", "问题");
+    engine.set_input("went");
+    assert_eq!(texts_of(&engine)[0], "went");
 }

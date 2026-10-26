@@ -3,6 +3,7 @@
 mod adaptive;
 mod color;
 mod font;
+mod keyboard;
 mod meta;
 pub(crate) mod node;
 mod status;
@@ -15,7 +16,8 @@ use serde::Deserialize;
 
 pub(crate) use adaptive::Adaptive;
 pub(crate) use color::{ColorRef, ColorSpec, ColorValue};
-pub(crate) use font::{BundledFont, FamilyList, FontRef, FontStyle};
+pub(crate) use font::{BundledFont, FontRef, FontStyle};
+pub(crate) use keyboard::KeyboardSpec;
 pub(crate) use meta::{LockedAppearance, Meta};
 pub(crate) use status::StatusSpec;
 pub(crate) use text::TextSettings;
@@ -50,4 +52,6 @@ pub(crate) struct ThemeFile {
     pub(crate) windows: Windows,
 
     pub(crate) status: StatusSpec,
+
+    pub(crate) keyboard: KeyboardSpec,
 }

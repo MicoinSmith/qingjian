@@ -193,7 +193,7 @@ fn commit_consumes_only_the_candidate_syllables() {
         .find(|c| c.text == "开发")
         .unwrap()
         .clone();
-    assert_eq!(engine.commit(&kaifa), "开发");
+    assert_eq!(engine.commit(&kaifa), "");
     assert_eq!(engine.composition().text(), "zhe");
 
     engine.set_input("kaif");
@@ -248,9 +248,39 @@ fn sentence_conversion_leads_when_input_spans_several_words() {
     assert_eq!(all[0], "开发");
     assert_eq!(all.iter().filter(|t| *t == "开发").count(), 1);
 
-    // 末尾只有一个字母时整句不算它：xiangkaif → 想开
+    // 末尾落单的声母也参与整句：xiangkaif → 想开放（f 当前缀，fang / fa 里词频高的 开放 胜出）
     let all = texts("xiangkaif");
-    assert_eq!(all[0], "想开");
+    assert_eq!(all[0], "想开放");
+}
+
+#[test]
+fn trailing_initial_sentence_yields_to_a_word_covering_the_whole_input() {
+    // 单字组句「后悬空」词频远高于低频整词「候选框」，落单 k 进词图后整句本来会赢
+    let dict = "后\thou\t900000\n悬\txuan\t900000\n空\tkong\t900000\n\
+        候\thou\t100\n选\txuan\t100\n框\tkuang\t100\n候选框\thou xuan kuang\t500\n";
+    let mut engine = Engine::new(Dictionary::parse(dict).unwrap());
+    engine.set_input("houxuank");
+    let items = engine.query().unwrap().candidates.items;
+    // 词库整词逐音节对上全部输入（末位 kuang 按前缀 k 命中），整句不插队
+    assert_eq!(items[0].text, "候选框");
+    assert!(items.iter().all(|c| c.kind != CandidateKind::Sentence));
+
+    // 两音节同样：zaiw → 在外（zai wai），不让整句「在我」（zai wo）
+    let dict = "在\tzai\t900000\n我\two\t900000\n外\twai\t100\n在外\tzai wai\t500\n";
+    let mut engine = Engine::new(Dictionary::parse(dict).unwrap());
+    engine.set_input("zaiw");
+    let items = engine.query().unwrap().candidates.items;
+    assert_eq!(items[0].text, "在外");
+    assert!(items.iter().all(|c| c.kind != CandidateKind::Sentence));
+
+    // 对照：没有整词覆盖全部输入时，落单声母的整句照常给出
+    let dict = "后\thou\t900000\n悬\txuan\t900000\n空\tkong\t900000\n\
+        候\thou\t100\n选\txuan\t100\n框\tkuang\t100\n";
+    let mut engine = Engine::new(Dictionary::parse(dict).unwrap());
+    engine.set_input("houxuank");
+    let items = engine.query().unwrap().candidates.items;
+    assert_eq!(items[0].text, "后悬空");
+    assert_eq!(items[0].kind, CandidateKind::Sentence);
 }
 
 #[test]
@@ -273,6 +303,24 @@ fn shortcuts_follow_the_first_local_candidate() {
     assert!(weekday.text.starts_with("星期"));
     engine.commit(&weekday);
     assert!(engine.composition().is_empty());
+}
+
+#[test]
+fn full_pinyin_keyword_brings_its_shortcuts() {
+    let mut engine = Engine::new(Dictionary::parse(KEYWORDS).unwrap());
+    engine.set_input("shijian");
+    let all: Vec<String> = engine
+        .query()
+        .unwrap()
+        .candidates
+        .items
+        .into_iter()
+        .map(|c| c.text)
+        .collect();
+    assert_eq!(all[0], "时间");
+    assert!(all[1].contains(':'), "时间之后紧跟现在的时间：{all:?}");
+    // 一组写法只出一遍
+    assert_eq!(all.iter().filter(|t| t.contains(':')).count(), 2);
 }
 
 #[test]
@@ -468,4 +516,24 @@ fn option_arrows_move_the_cursor_by_syllable() {
     engine.move_cursor_home();
     assert!(engine.move_cursor_syllable_right());
     assert_eq!(engine.composition().cursor(), "hello".len());
+}
+
+#[test]
+fn committing_the_rest_after_a_separator_split_consumes_it() {
+    // `shan'gou` 先选 闪，剩下 `'gou`；再选 购 要把它吃完，不能一直留着让空格反复上屏 购（#669）
+    let dictionary = "闪\tshan\t9000\n山沟\tshan gou\t8000\n购\tgou\t9000\n";
+    let mut engine = Engine::new(Dictionary::parse(dictionary).unwrap());
+    engine.set_input("shan'gou");
+    for (text, committed) in [("闪", ""), ("购", "闪购")] {
+        let candidate = engine
+            .query()
+            .unwrap()
+            .candidates
+            .items
+            .into_iter()
+            .find(|c| c.text == text)
+            .unwrap();
+        assert_eq!(engine.commit(&candidate), committed);
+    }
+    assert!(engine.composition().is_empty());
 }

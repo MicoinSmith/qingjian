@@ -14,7 +14,8 @@ pub use qingjian_platform::{
 };
 pub use qingjian_render::Mode;
 pub use qingjian_windows_server::dispatch::{
-    CandidateSink, RenderSettings, StatusEvent, StatusSink, StatusView,
+    CandidateMenu, CandidateMouse, CandidateSink, KeyHintContent, KeyHintView, PanelFrame,
+    RenderSettings, StatusEvent, StatusSink, StatusView,
 };
 pub use qingjian_windows_server::{AssemblySpec, Router, RouterConfig, assembly};
 
@@ -158,11 +159,6 @@ pub fn digit_with(n: u32, modifiers: KeyModifiers) -> KeyEvent {
 
 pub const SHIFT: KeyModifiers = KeyModifiers {
     shift: true,
-    ..ALT_OFF
-};
-
-pub const CTRL: KeyModifiers = KeyModifiers {
-    ctrl: true,
     ..ALT_OFF
 };
 
@@ -316,19 +312,33 @@ pub fn press_in(router: &mut Router, session: SessionId, event: KeyEvent) {
     let _ = router.handle(ClientMessage::Key { session, event });
 }
 
-/// 记录自绘候选窗收到的帧与输入状态。
+/// 记录自绘候选窗收到的帧、输入状态、键位提示与右键菜单。
 #[derive(Clone, Default)]
-pub struct RecordingCandidates(pub Arc<Mutex<Vec<Frame>>>, pub Arc<Mutex<Vec<Mode>>>);
+pub struct RecordingCandidates(
+    pub Arc<Mutex<Vec<Frame>>>,
+    pub Arc<Mutex<Vec<Mode>>>,
+    pub Arc<Mutex<Vec<Option<KeyHintView>>>>,
+    pub Arc<Mutex<Vec<CandidateMenu>>>,
+);
 
 impl CandidateSink for RecordingCandidates {
-    fn show(&self, frame: Frame, mode: Mode, _rect: ScreenRect) {
+    fn show(&self, frame: Frame, mode: Mode, _rect: ScreenRect, key_hint: Option<KeyHintView>) {
         self.0.lock().unwrap().push(frame);
         self.1.lock().unwrap().push(mode);
+        self.2.lock().unwrap().push(key_hint);
     }
 
     fn hide(&self) {}
 
+    fn show_panel(&self, _frame: PanelFrame, _rect: Option<ScreenRect>) {}
+
+    fn hide_panel(&self) {}
+
     fn configure(&self, _settings: RenderSettings) {}
+
+    fn show_menu(&self, menu: CandidateMenu) {
+        self.3.lock().unwrap().push(menu);
+    }
 }
 
 pub fn rect() -> ScreenRect {

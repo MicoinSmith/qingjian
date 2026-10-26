@@ -15,17 +15,17 @@ pub struct ShortcutConfig {
     #[serde(flatten)]
     pub mode: ModeKeys,
 
-    /// 中 / 英切换键（Windows 用），可多选：`["shift", "control", "ctrl+alt+space"]`。详见 [`SwitchKeys`]。
+    /// 中 / 英切换键（Windows、Linux 用），可多选：`["shift", "control", "ctrl+alt+space"]`。详见 [`SwitchKeys`]。
     pub switch_mode: SwitchKeys,
 
     /// 候选高亮由 `↑` / `↓` 还是 `←` / `→` 移动（Windows 用）。详见 [`HighlightKeys`]。
     pub highlight_keys: HighlightKeys,
 
-    /// Windows：切换当前中英模式的全 / 半角标点，空串禁用，例如 `ctrl+.`。
+    /// 切换当前中英模式的全 / 半角标点（macOS 只切中文模式的），空串禁用，例如 `ctrl+.`。
     #[serde(with = "super::optional_key_combo")]
     pub toggle_punctuation: Option<KeyCombo>,
 
-    /// Windows：主翻页键以外同时启用的符号键对。
+    /// 主翻页键以外同时启用的符号键对（macOS、Windows）。
     pub extra_page_keys: PageKeys,
 
     /// 数字键配这些修饰键：上屏候选的第一个译词。
@@ -37,8 +37,8 @@ pub struct ShortcutConfig {
     /// 把应用里选中的文字译成学习语言（需要云服务开着）。
     pub translate_selection: KeyCombo,
 
-    /// 数字键配这些修饰键：删掉候选（用户词整个删掉，词库词清掉对它的学习）。
-    pub delete_candidate: Modifiers,
+    /// 组句中按需调用 AI（缺省 Ctrl+Alt+J，macOS 是 ⌃⌥J）。
+    pub predict: KeyCombo,
 }
 
 impl Default for ShortcutConfig {
@@ -48,6 +48,17 @@ impl Default for ShortcutConfig {
         let (translation, translation_second) = (Modifiers::CONTROL, Modifiers::SHIFT_CONTROL);
         #[cfg(not(windows))]
         let (translation, translation_second) = (Modifiers::OPTION, Modifiers::SHIFT_OPTION);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let translate_selection = KeyCombo {
+            modifiers: Modifiers {
+                option: true,
+                shift: true,
+                ..Modifiers::default()
+            },
+            key: 't',
+        };
+        #[cfg(any(windows, target_os = "macos"))]
+        let translate_selection = KeyCombo::TRANSLATE_DEFAULT;
         Self {
             mode: ModeKeys::default(),
             switch_mode: SwitchKeys::default(),
@@ -56,26 +67,13 @@ impl Default for ShortcutConfig {
             extra_page_keys: PageKeys::default(),
             translation,
             translation_second,
-            translate_selection: KeyCombo::TRANSLATE_DEFAULT,
-            delete_candidate: Modifiers::SHIFT,
+            translate_selection,
+            predict: KeyCombo::PREDICT_DEFAULT,
         }
     }
 }
 
 impl ShortcutConfig {
-    /// 删候选的修饰键；为空或与任一组译词键撞了就退回缺省。
-    pub fn delete_keys(&self) -> Modifiers {
-        let (first, second) = self.translation_keys();
-        if self.delete_candidate.is_empty()
-            || self.delete_candidate == first
-            || self.delete_candidate == second
-        {
-            Self::default().delete_candidate
-        } else {
-            self.delete_candidate
-        }
-    }
-
     /// 两组译词修饰键；两组相同或有一组为空时整个退回缺省，不做一半。
     pub fn translation_keys(&self) -> (Modifiers, Modifiers) {
         if self.translation == self.translation_second
@@ -143,28 +141,6 @@ mod tests {
             toml::from_str("translation = \"control+option\"\ntranslation_second = \"option\"\n")
                 .unwrap();
         assert_eq!(swapped.translation_keys().1, Modifiers::OPTION);
-    }
-
-    #[test]
-    fn delete_keys_fall_back_when_clashing_with_translation_keys() {
-        let default = ShortcutConfig::default();
-        let parsed: ShortcutConfig = toml::from_str("").unwrap();
-        assert_eq!(parsed.delete_keys(), default.delete_candidate);
-        // 与平台缺省的译词键撞上才算「冲突」，两边平台都成立
-        let clash: ShortcutConfig = toml::from_str(&format!(
-            "delete_candidate = \"{}\"\n",
-            default.translation.key()
-        ))
-        .unwrap();
-        assert_eq!(clash.delete_keys(), default.delete_candidate);
-        // 不与任何一组译词键冲突的修饰键：平台上取一个，断言它原样生效
-        let free = [Modifiers::OPTION, Modifiers::CONTROL, Modifiers::SHIFT]
-            .into_iter()
-            .find(|m| *m != default.translation && *m != default.translation_second)
-            .unwrap();
-        let custom: ShortcutConfig =
-            toml::from_str(&format!("delete_candidate = \"{}\"\n", free.key())).unwrap();
-        assert_eq!(custom.delete_keys(), free);
     }
 
     #[test]

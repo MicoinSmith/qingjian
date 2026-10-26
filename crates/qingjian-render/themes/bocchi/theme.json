@@ -1,7 +1,7 @@
 {
   "extends": "qingjian",
   "schema": 1,
-  "meta": { "id": "bocchi", "name": "波奇酱", "author": "青简", "license": "GPL-3.0-or-later", "appearance": "light" },
+  "meta": { "id": "bocchi", "name": "波奇酱", "author": "青简", "license": "GPL-3.0-or-later AND LicenseRef-Character", "appearance": "light" },
 
   "variables": {
     "text": "#302632",
@@ -13,7 +13,8 @@
     "ink": "#302632",
     "rose": "#d98d9e",
     "accent": "#ef85a2",
-    "divider": "#f3d6dc"
+    "divider": "#f3d6dc",
+    "surface": "#fff4f6"
   },
 
   "text": {

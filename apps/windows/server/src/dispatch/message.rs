@@ -81,6 +81,7 @@ impl Router {
                 // 组句在 DLL 侧结束（应用终止组句 / 翻译评审失焦）：只收窗口；缓冲留给下一键的 Commit 清。
                 if self.focused == Some(session) {
                     self.end_translation();
+                    self.cancel_prediction();
                     self.hide_candidate_window();
                 }
                 None
@@ -130,10 +131,13 @@ impl Router {
     fn handle_key(&mut self, session: SessionId, event: KeyEvent) -> ServerMessage {
         self.ensure_focus(session);
         self.notice = None;
+        self.candidates.close_menu();
         if self.translation.is_some() {
             return self.handle_translation_review(session, &event);
         }
-        if self.engine.composition().is_empty()
+        if self.config.cloud_enabled
+            && self.engine.composition().is_empty()
+            && !self.panel_open()
             && self.engine.prediction_enabled()
             && self.matches_translate_combo(&event)
         {
@@ -162,6 +166,8 @@ impl Router {
             (Some(clicked), commit) => Some(clicked + commit.as_deref().unwrap_or_default()),
             (None, commit) => commit,
         };
+        // 选词没选完一段拼音时 Core 把词留在组句里、上屏文本是空串：不让 DLL 结束组句
+        let commit = commit.filter(|text| !text.is_empty());
         self.poll_prediction();
         // 自绘窗吃未降级的帧；发给 DLL 的那份按老协议降级（见 composed 的 current_frame）
         let shown = self.self_drawn_frame();
@@ -171,6 +177,7 @@ impl Router {
             outcome,
             commit,
             frame: self.current_frame(),
+            english: None,
         }
     }
 

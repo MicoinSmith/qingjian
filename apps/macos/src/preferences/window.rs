@@ -180,7 +180,7 @@ impl PreferencesWindow {
         ));
         content.addSubview(&status);
         let panel = PreferencesPanel::new(mtm, NSRect::new(NSPoint::ZERO, content_size));
-        panel.setTitle(&NSString::from_str("青简偏好设置"));
+        panel.setTitle(&NSString::from_str("青简旧版设置"));
         panel.setContentView(Some(&content));
         panel.center();
 
@@ -220,7 +220,7 @@ impl PreferencesWindow {
         &self,
         config: &Config,
     ) -> Result<(Option<usize>, qingjian_core::CustomPhrase), String> {
-        Ok((self.phrases.selected(config)?, self.phrases.draft()))
+        Ok((self.phrases.selected(config)?, self.phrases.draft()?))
     }
 
     /// 打开（或带到最前）。

@@ -1,17 +1,7 @@
 //! 符号面板的呈现：当前分类的条目排成格子，顶上两行标签，信息行放高亮条目的名字。
 
-use qingjian_core::{CandidateKind, PanelSection};
-
 use crate::candidates::{Frame, PanelTabs, Row};
 use crate::host::Host;
-
-/// 一行几格按分类里最宽的条目定：符号与 emoji 一格一字，十格一行；颜文字宽，少放几格（面板总宽不变，格子拉宽）。
-const NARROW_COLUMNS: usize = 10;
-const MEDIUM_COLUMNS: usize = 6;
-const WIDE_COLUMNS: usize = 4;
-
-/// 估宽时一条最多算几个字宽：再宽的在格子里截断，信息行里看全文。
-const MAX_ITEM_EMS: f32 = 8.0;
 
 impl Host {
     /// 面板刚打开或换了分类：格子换成当前分类的条目，高亮回到第一格。
@@ -19,14 +9,7 @@ impl Host {
         let Some(section) = self.engine.symbol_panel().map(|p| p.section().clone()) else {
             return;
         };
-        let ems = item_ems(&section);
-        let columns = if ems <= 2.2 {
-            NARROW_COLUMNS
-        } else if ems <= 5.0 {
-            MEDIUM_COLUMNS
-        } else {
-            WIDE_COLUMNS
-        };
+        let columns = section.columns();
         self.session.open_panel(section.items, columns);
     }
 
@@ -55,13 +38,15 @@ impl Host {
             .iter()
             .map(|cell| match cell.candidate() {
                 Some(candidate) => {
-                    let mut row = Row::from_candidate(0, candidate);
+                    let mut row =
+                        Row::from_candidate(0, candidate, self.translation_pos, self.aux_code_show);
                     row.index = String::new();
                     row
                 }
                 None => Row {
                     index: String::new(),
                     text: String::new(),
+                    code: None,
                     annotation: Vec::new(),
                     cloud: false,
                 },
@@ -80,29 +65,8 @@ impl Host {
             status: None,
             mode: self.input_mode(),
             panel: Some(tabs),
+            keyboard: None,
         };
         self.window.show(frame, self.anchor);
     }
-}
-
-/// 分类里最宽的一条按几个字宽估：emoji 一个字宽，ASCII 半个，组合附加符号不占宽。
-fn item_ems(section: &PanelSection) -> f32 {
-    section
-        .items
-        .iter()
-        .map(|item| {
-            if item.kind == CandidateKind::Emoji {
-                return 1.0;
-            }
-            item.text
-                .chars()
-                .map(|c| match c {
-                    '\u{0300}'..='\u{036F}' | '\u{FE00}'..='\u{FE0F}' => 0.0,
-                    c if c.is_ascii() => 0.6,
-                    _ => 1.0,
-                })
-                .sum::<f32>()
-        })
-        .fold(1.0_f32, f32::max)
-        .min(MAX_ITEM_EMS)
 }

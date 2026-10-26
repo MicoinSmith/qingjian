@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
+use crate::usage::ApiUsageStats;
 
 /// 联想回复的 token 上限：几条短句足够，防止模型长篇大论。
 const MAX_TOKENS: u32 = 200;
@@ -30,6 +32,7 @@ const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 static SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 
 /// OpenAI 兼容聊天接口的封装：一个请求进、若干联想条目出。
+#[derive(Clone)]
 pub struct ChatClient {
     /// 底层客户端。
     client: Client<OpenAIConfig>,
@@ -45,10 +48,14 @@ pub struct ChatClient {
 
     /// 接口关思考用的是哪种参数（按接口地址定）。
     thinking_switch: ThinkingSwitch,
+
+    /// 壳选择累计用量的本机文件；None 时保持原有无统计行为。
+    usage_path: Option<PathBuf>,
 }
 
 impl ChatClient {
     pub fn new(config: &PredictConfig, api_key: String) -> Self {
+        install_crypto_provider();
         let openai = OpenAIConfig::new()
             .with_api_base(config.base_url.trim_end_matches('/'))
             .with_api_key(api_key);
@@ -59,7 +66,13 @@ impl ChatClient {
             timeout: Duration::from_millis(config.timeout_ms),
             reasoning_effort: parse_reasoning_effort(&config.reasoning_effort),
             thinking_switch: ThinkingSwitch::for_url(&config.base_url),
+            usage_path: None,
         }
+    }
+
+    pub fn with_usage(mut self, path: Option<PathBuf>) -> Self {
+        self.usage_path = path;
+        self
     }
 
     pub async fn complete(&self, request: &PredictionRequest) -> Result<Reply, PredictError> {
@@ -122,15 +135,23 @@ impl ChatClient {
 
     /// 发一次请求，返回原始 JSON。
     async fn send(&self, body: &serde_json::Value) -> Result<serde_json::Value, PredictError> {
-        tokio::time::timeout(self.timeout, self.client.chat().create_byot(body.clone()))
-            .await
-            .map_err(|_| PredictError::Timeout(self.timeout.as_millis() as u64))?
-            .map_err(PredictError::from)
+        if let Some(path) = &self.usage_path {
+            ApiUsageStats::record_request(path);
+        }
+        let response =
+            tokio::time::timeout(self.timeout, self.client.chat().create_byot(body.clone()))
+                .await
+                .map_err(|_| PredictError::Timeout(self.timeout.as_millis() as u64))
+                .and_then(|result| result.map_err(PredictError::from));
+        if let Some(path) = &self.usage_path {
+            ApiUsageStats::record_response(path, response.as_ref().ok());
+        }
+        response
     }
 
     /// 从原始响应里取正文；空正文时把原始响应记进日志，方便排查思考占满预算、模型名不对这类问题。
     fn parse_content(&self, raw: serde_json::Value) -> Result<String, PredictError> {
-        let response: CreateChatCompletionResponse = serde_json::from_value(raw.clone())?;
+        let response = chat_response(raw.clone())?;
         let cut_off = response
             .choices
             .iter()
@@ -154,6 +175,17 @@ impl ChatClient {
         tracing::debug!(%content, "模型回复");
         Ok(content)
     }
+}
+
+/// 原始响应解析成 async-openai 的类型。`service_tier` 取正文用不着，各家写法却不一（有的服务回 `"asap"`），
+/// 那边是封闭枚举，认不得就整条解析失败，先去掉。
+fn chat_response(
+    mut raw: serde_json::Value,
+) -> Result<CreateChatCompletionResponse, serde_json::Error> {
+    if let Some(object) = raw.as_object_mut() {
+        object.remove("service_tier");
+    }
+    serde_json::from_value(raw)
 }
 
 /// 日志里的原始响应最多留这么多字符。
@@ -258,18 +290,49 @@ fn thinking_error(message: &str) -> async_openai::error::OpenAIError {
 /// 按接口地址决定 HTTP 客户端：OpenCode 带上它要求的会话头，其他服务用默认客户端。
 /// 头装不上（理论上不会）就退回默认客户端，请求照发，让服务端的报错说明问题。
 fn http_client(base_url: &str) -> reqwest::Client {
-    if !is_opencode(base_url) {
-        return reqwest::Client::new();
-    }
-    let Ok(value) = HeaderValue::from_str(&SESSION_ID) else {
-        return reqwest::Client::new();
+    let builder = client_builder();
+    let builder = match HeaderValue::from_str(&SESSION_ID) {
+        Ok(value) if is_opencode(base_url) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(OPENCODE_SESSION_HEADER, value);
+            builder.default_headers(headers)
+        }
+        _ => builder,
     };
-    let mut headers = HeaderMap::new();
-    headers.insert(OPENCODE_SESSION_HEADER, value);
+    builder.build().unwrap_or_default()
+}
+
+/// 只开 `rustls` 时，进程级的缺省加密实现要先装上：async-openai 的 `Client::with_config` 会先建一个缺省的 reqwest Client
+/// （之后才换成 [`http_client`] 那个），reqwest 在 `rustls-no-provider` 下找不到缺省实现就 panic。装过再装返回 Err，忽略。
+#[cfg(all(feature = "rustls", not(feature = "native-tls")))]
+fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+#[cfg(feature = "native-tls")]
+fn install_crypto_provider() {}
+
+/// 桌面用系统 TLS，reqwest 缺省就是。
+#[cfg(feature = "native-tls")]
+fn client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .unwrap_or_default()
+}
+
+/// 只开 `rustls` 时（安卓）：ring 做加密、内置 Mozilla 根证书验服务端，不碰平台证书库（那要 Java 侧组件）。
+#[cfg(all(feature = "rustls", not(feature = "native-tls")))]
+fn client_builder() -> reqwest::ClientBuilder {
+    let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map(|config| config.with_root_certificates(roots).with_no_client_auth());
+    match builder {
+        Ok(tls) => reqwest::Client::builder().tls_backend_preconfigured(tls),
+        Err(error) => {
+            tracing::error!(%error, "rustls 配置失败");
+            reqwest::Client::builder()
+        }
+    }
 }
 
 /// 接口地址是否指向 OpenCode（`opencode.ai` 及其子域）。
@@ -297,6 +360,27 @@ fn parse_reasoning_effort(value: &str) -> Option<ReasoningEffort> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_service_tier_does_not_break_parsing() {
+        let raw = serde_json::json!({
+            "id": "gen-1",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "deepseek/deepseek-v4.1-flash",
+            "service_tier": "asap",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "{\"sentence\":\"hi\"}"},
+                "finish_reason": "stop"
+            }]
+        });
+        let response = chat_response(raw).unwrap();
+        assert_eq!(
+            response.choices[0].message.content.as_deref(),
+            Some("{\"sentence\":\"hi\"}")
+        );
+    }
 
     #[test]
     fn reasoning_effort_parses_known_values_and_ignores_the_rest() {

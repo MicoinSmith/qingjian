@@ -218,7 +218,7 @@ fn reduce_motion() -> bool {
 }
 
 /// 位图与内容区换成点；内容区原点换成左下角起算。
-fn bounds(rendered: &qingjian_render::Rendered) -> ViewBounds {
+pub(super) fn bounds(rendered: &qingjian_render::Rendered) -> ViewBounds {
     let points = |pixels: u32| f64::from(pixels) / f64::from(rendered.scale);
     let (width, height) = (rendered.pixmap.width(), rendered.pixmap.height());
     let below = height.saturating_sub(rendered.content_y + rendered.content_height);
@@ -235,7 +235,10 @@ fn bounds(rendered: &qingjian_render::Rendered) -> ViewBounds {
 }
 
 /// 预乘 RGBA 位图 → NSImage（尺寸按点，位图按像素，Retina 自然对上）。
-fn to_image(pixmap: &qingjian_render::Pixmap, size: NSSize) -> Option<Retained<NSImage>> {
+pub(super) fn to_image(
+    pixmap: &qingjian_render::Pixmap,
+    size: NSSize,
+) -> Option<Retained<NSImage>> {
     let (width, height) = (pixmap.width(), pixmap.height());
     // SAFETY: planes 传空让 AppKit 自己分配；参数描述的是 8 位 × 4 通道、预乘 alpha 在后的连续 RGBA，
     // 与 tiny-skia 的内存布局一致；随后按 bytesPerRow 逐行拷进去，不越界。

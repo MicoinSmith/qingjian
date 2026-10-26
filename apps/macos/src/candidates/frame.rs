@@ -35,6 +35,9 @@ pub struct Frame {
 
     /// 符号面板的标签；有它时这一帧是面板：`rows` 是格子（按 `columns` 行优先排开），一律系统绘制。
     pub panel: Option<PanelTabs>,
+
+    /// 双拼键位提示；有它时在候选窗旁另开一块窗口画键盘。
+    pub keyboard: Option<qingjian_render::Keyboard>,
 }
 
 impl Frame {

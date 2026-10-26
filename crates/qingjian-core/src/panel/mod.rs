@@ -3,11 +3,22 @@
 //! 面板只管内容与分类切换，格子里怎么移动高亮交给 [`crate::Grid`]，与横排矩阵同一套。
 
 mod catalog;
+mod common;
 mod group;
+mod history;
 mod section;
 mod state;
+mod usage;
 
 pub(crate) use catalog::{CATALOG, KEYWORDS};
+pub use common::common_items;
 pub use group::PanelGroup;
-pub use section::PanelSection;
+pub use history::{NoPanelHistory, PanelHistory};
+pub use section::{PANEL_COLUMNS, PanelSection};
 pub use state::SymbolPanel;
+pub use usage::PanelUse;
+
+/// 内置的全部分类（不含搜索组），按面板里的顺序；移动端的符号 / 表情面板直接拿去排格子。
+pub fn catalog_sections() -> &'static [PanelSection] {
+    &CATALOG.sections
+}

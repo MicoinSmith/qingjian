@@ -11,27 +11,25 @@ mod extends;
 pub(crate) mod file;
 mod font;
 mod jsonc;
+mod keyboard;
 mod library;
-mod svg_image;
 mod text_sizes;
 mod validate;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use tiny_skia::Pixmap;
-
-use crate::color::Color;
+use bamboo_slip::tiny_skia::Pixmap;
+use bamboo_slip::{Color, FamilyTable, FontSpec, SvgImage};
 
 pub use error::ThemeError;
-pub(crate) use font::{FamilyId, FontFamilies};
-pub use font::{FontSpec, FontWeight};
+use font::FontFamilies;
+pub use keyboard::KeyboardColors;
 pub use library::ThemeLibrary;
 pub use text_sizes::TextSizes;
 
 use assets::Assets;
 use file::{ColorRef, FontRef, LockedAppearance, SCHEMA, ThemeFile};
-pub(crate) use svg_image::SvgImage;
 
 /// 内置主题编进程序的图片：主题里写的路径与文件内容。
 type EmbeddedFiles = &'static [(&'static str, &'static [u8])];
@@ -414,7 +412,7 @@ impl Theme {
         self.animations
     }
 
-    /// 设置里的候选字号相对主题的比例：表格行高与状态条整体跟着它缩放。
+    /// 设置里的候选字号相对主题的比例：表格行高与键位提示键盘跟着它缩放。
     pub(crate) fn candidate_scale(&self) -> f32 {
         self.sizes.ratio("candidate", |name| self.theme_size(name))
     }
@@ -444,8 +442,17 @@ impl Theme {
     }
 
     /// 样式里写到的系统字族名（不含 `system`）。壳按名字查出字体文件，交给 [`crate::Renderer::load_theme_fonts`]。
+    /// 主题变量按当前外观取的颜色（`surface`、`accent`…）；没有这个变量时为 `None`。
+    /// 渲染器之外还要配色的地方用（手机壳的候选条底色、键盘）。
+    pub fn variable(&self, name: &str) -> Option<Color> {
+        self.file
+            .variables
+            .get(name)
+            .map(|value| value.get(self.dark).0)
+    }
+
     pub fn font_families(&self) -> Vec<String> {
-        self.families.names()
+        self.families.table().names()
     }
 
     /// 随主题带的字体文件（已检查在主题目录里）。
@@ -497,14 +504,20 @@ impl Theme {
         text_sizes::scaled(spec, self.sizes.ratio(name, |base| self.theme_size(base)))
     }
 
-    /// 字族表，渲染器按 [`FamilyId`] 查回退链；两份 `Theme` 共用同一张表时指针相同。
-    pub(crate) fn families(&self) -> &Arc<FontFamilies> {
-        &self.families
+    /// 字族表，画笔按 [`bamboo_slip::FamilyId`] 查回退链；两份 `Theme` 共用同一张表时指针相同。
+    pub(crate) fn families(&self) -> &Arc<FamilyTable> {
+        self.families.table()
     }
 
     /// 节点里的 `font`：样式名，或在样式上改字号 / 字重。
+    /// 在样式上写死的字号也按设置里那个样式的比例缩放（手机候选条在 `candidate` 上写 19 点，用户调大候选字号时它跟着大）。
     pub(crate) fn font_ref(&self, font: &FontRef) -> FontSpec {
-        font.apply(font.base().map_or(FALLBACK_FONT, |name| self.font(name)))
+        let Some(name) = font.base() else {
+            return font.apply(FALLBACK_FONT);
+        };
+        let ratio = self.sizes.ratio(name, |base| self.theme_size(base));
+        let base = self.families.style(name).unwrap_or(FALLBACK_FONT);
+        text_sizes::scaled(font.apply(base), ratio)
     }
 
     /// 当前外观下的文字覆盖率 gamma。
@@ -567,11 +580,11 @@ mod tests {
         assert!(Theme::builtin("nope", false).is_none());
         assert_eq!(
             theme.color(&ColorRef::Variable("accent".to_owned())),
-            Color::rgba(176, 206, 125, 127)
+            Color::rgba(148, 190, 82, 127)
         );
         assert_eq!(
             Theme::dark().color(&ColorRef::Variable("accent".to_owned())),
-            Color::rgb(36, 76, 36)
+            Color::rgb(51, 111, 51)
         );
     }
 
@@ -660,6 +673,13 @@ mod tests {
         assert_eq!(sized.candidate_scale(), ratio);
         // 换外观不丢设置里的字号
         assert_eq!(sized.with_dark(true).font("candidate").size, 26.0);
+        // 在样式上写死的字号（手机候选条）按同一比例缩放
+        let inline: FontRef =
+            serde_json::from_str(r#"{ "base": "candidate", "size": 19, "line_height": 23 }"#)
+                .unwrap();
+        assert_eq!(theme.font_ref(&inline).size, 19.0);
+        assert_eq!(sized.font_ref(&inline).size, 19.0 * ratio);
+        assert_eq!(sized.font_ref(&inline).line_height, 23.0 * ratio);
         // 不是正数当没填
         assert_eq!(TextSizes::new(-1.0, f32::NAN), TextSizes::default());
     }

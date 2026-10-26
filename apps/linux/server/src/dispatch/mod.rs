@@ -1,4 +1,4 @@
-//! Linux 会话路由：独立保存各上下文的组句，词库和学习服务保持单实例。本地整句模型在 [`rescore`]。
+//! Linux 会话路由：独立保存各上下文的组句，词库和学习服务保持单实例。本地整句模型在 `rescore`。
 
 mod composed;
 mod config;
@@ -9,6 +9,7 @@ mod message;
 mod reload;
 mod rescore;
 mod session;
+mod translate;
 
 use self::composed::Composed;
 pub use self::config::RouterConfig;
@@ -16,6 +17,7 @@ use self::reload::ConfigReload;
 pub use self::rescore::find_model;
 use self::rescore::{ModelLoader, RescoreState};
 use self::session::SessionInfo;
+use self::translate::Translation;
 use qingjian_core::Engine;
 use qingjian_platform::protocol::{ClientMessage, ServerMessage, SessionId};
 use std::collections::HashMap;
@@ -48,8 +50,16 @@ pub struct Router {
     /// 本轮是否已主动移动候选。
     navigated: bool,
 
-    /// 可选的整句提示；首版没有云服务。
+    /// 云端返回的整句补全。
     sentence: Option<String>,
+
+    /// 当前焦点中的选区翻译评审。
+    translation: Option<Translation>,
+
+    /// 插件选区请求标识，防止旧回复跨会话生效。
+    selection_seq: u64,
+
+    pending_selection: Option<(SessionId, u64)>,
 
     /// 删除候选等操作提示。
     notice: Option<String>,
@@ -76,7 +86,9 @@ pub struct Router {
 impl Router {
     pub fn new(engine: Engine, mut config: RouterConfig) -> Self {
         config.page_size = config.page_size.clamp(1, 9);
-        config.cloud_slots = 0;
+        if !engine.prediction_enabled() {
+            config.cloud_slots = 0;
+        }
         Self {
             engine,
             config,
@@ -86,6 +98,9 @@ impl Router {
             highlight: 0,
             navigated: false,
             sentence: None,
+            translation: None,
+            selection_seq: 0,
+            pending_selection: None,
             notice: None,
             display_revision: 0,
             last_flush: Instant::now(),
@@ -107,11 +122,17 @@ impl Router {
         self.engine.flush_learning();
         self.last_flush = Instant::now();
     }
-    /// 到点了：看配置改没改、接上加载好的模型、推进重排、到点落盘学习（输入停止后也不能一直不落盘）。主循环超时与插件的 `Poll` 都会调。
+    /// 到点了：看配置改没改、接上加载好的模型、推进重排、收释义兜底、到点落盘学习（输入停止后也不能一直不落盘）。
+    /// 主循环超时与插件的 `Poll` 都会调。
     pub fn tick(&mut self) {
         self.poll_config_reload();
         self.attach_loaded_model();
         self.advance_rescoring();
+        self.poll_prediction();
+        let learned = self.engine.poll_glosses();
+        if learned > 0 {
+            tracing::info!(learned, "释义兜底写入个人释义表");
+        }
         if self.last_flush.elapsed() >= LEARNING_FLUSH_INTERVAL {
             self.flush_learning();
         }

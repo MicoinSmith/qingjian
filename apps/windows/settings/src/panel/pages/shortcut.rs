@@ -1,4 +1,4 @@
-//! 「快捷键」页：翻页键、高亮移动键、模式键，译词 / 删候选 / 翻译选中文字的修饰键。
+//! 「快捷键」页：翻页键、高亮移动键、模式键，译词 / 翻译选中文字的修饰键。
 //! 翻译选中文字只改修饰键，字母键固定用配置里当前的；要换字母直接改 `config.toml`。
 
 use qingjian_platform::{HighlightKeys, Modifiers};
@@ -88,7 +88,7 @@ pub(crate) fn view(settings: &Settings, context: &mut ViewContext<Settings>) -> 
         ),
         field(
             "高亮移动键",
-            "选「← / →」时两键连着拼音行一起走：拼音光标到末尾按 → 才移到下一个候选，候选在首位按 ← 才退回拼音行；此时 ↑ / ↓ 不做事。",
+            "选「← / →」时 ← / → 在候选之间移动；横排下 ↑ 移到拼音里改光标位置、↓ 回到候选，竖排下拼音光标到末尾按 → 才到下一个候选。",
             mode_combo(
                 &HighlightKeys::ALL,
                 s.highlight_keys,
@@ -127,11 +127,11 @@ pub(crate) fn view(settings: &Settings, context: &mut ViewContext<Settings>) -> 
             ),
         ),
         field(
-            "删除候选",
-            "按住修饰键再按候选序号：自己造的词、云端选过的词整删；词库里的词清掉学习记录，回到原排序。",
+            "按需 AI 联想",
+            "输入拼音时按这组键 + 当前字母（缺省 Ctrl+Alt+J），获取置顶候选。只改修饰键；字母可在配置的 shortcut.predict 中修改。",
             modifier_combo(
-                s.delete_candidate,
-                context.callback(Message::DeleteCandidate),
+                s.predict.modifiers,
+                context.callback(Message::PredictShortcut),
             ),
         ),
         field(

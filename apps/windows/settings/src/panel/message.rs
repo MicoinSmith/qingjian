@@ -8,11 +8,13 @@ pub(crate) enum Message {
 
     // 通用页
     LearningLanguage(Option<usize>),
+    /// 译词旁是否显示词性标注（`[general] translation_pos`）。
+    TranslationPos(bool),
     PageSize(Option<f64>),
     Scheme(Option<usize>),
     ShuangpinRawPreedit(bool),
     Wubi(bool),
-    Traditional(bool),
+    Traditional(Option<usize>),
     Emoji(Option<usize>),
     Kaomoji(Option<usize>),
     Symbols(Option<usize>),
@@ -21,6 +23,8 @@ pub(crate) enum Message {
     ChineseFirst(bool),
     /// 中文模式下 Shift+字母：交给应用（缺省）还是进组句缓冲区。
     ShiftLetter(Option<usize>),
+    /// 中文组句中小键盘数字选候选还是直接输入。
+    NumpadDigit(Option<usize>),
     FullWidthPunctuation(bool),
     EnglishFullWidthPunctuation(bool),
     /// 组句中会转全角的标点先把高亮候选上屏再补标点。
@@ -40,6 +44,8 @@ pub(crate) enum Message {
     Appearance(Option<usize>),
     Theme(Option<usize>),
     Layout(Option<usize>),
+    /// 横排时 ↑ / ↓ 把单行展开成多行矩阵。
+    HorizontalGrid(bool),
     Preedit(Option<usize>),
     Renderer(Option<usize>),
     /// 字体框里的文字变了：空或正好是某个字族名就落盘。
@@ -56,11 +62,15 @@ pub(crate) enum Message {
     // 云服务页
     LocalModel(bool),
     CloudEnabled(bool),
+    CloudAutomatic(bool),
+    CloudDebounce(Option<f64>),
+    CloudMinInterval(Option<f64>),
     CloudApiKey(String),
     CloudModel(String),
     CloudBaseUrl(String),
     CloudSlots(Option<f64>),
     CloudSentence(bool),
+    CloudSentenceTranslation(bool),
     TestConnection,
     CloudTestDone(Result<String, String>),
 
@@ -75,9 +85,9 @@ pub(crate) enum Message {
     QuestionMark(bool),
     Translation(Option<usize>),
     TranslationSecond(Option<usize>),
-    DeleteCandidate(Option<usize>),
     /// 只换修饰键，字母键固定用当前的。
     TranslateSelection(Option<usize>),
+    PredictShortcut(Option<usize>),
 
     // 模糊音页
     /// 配置键 + 新值。

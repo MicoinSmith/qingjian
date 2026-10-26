@@ -3,7 +3,8 @@
 use super::diagnostics::{copy_to_pasteboard, open_with_system};
 use super::*;
 use crate::preferences::DEFAULT_FONT_LABEL;
-use qingjian_platform::{FontSize, ShiftLetter, SwitchKey};
+use qingjian_core::TraditionalVariant;
+use qingjian_platform::{FontSize, ShiftLetter, SwitchKey, code_schemes};
 
 impl Host {
     /// 写短语前读取文件；外部规则有变化时同步列表并请用户重新确认。
@@ -67,6 +68,14 @@ impl Host {
                     self.apply_config(false);
                 }
             }
+            MenuAction::OpenSettings => {
+                if let Some(app) = settings_app() {
+                    open_with_system(&[&app.to_string_lossy()]);
+                } else {
+                    tracing::warn!("包里没有设置程序，改开旧版偏好设置");
+                    self.perform(MenuAction::OpenPreferences);
+                }
+            }
             MenuAction::OpenPreferences => {
                 self.preferences.sync_usage(
                     &self.engine.usage_summary(),
@@ -83,6 +92,18 @@ impl Host {
             MenuAction::OpenDownload => open_with_system(&[qingjian_update::DOWNLOAD_URL]),
             // 要当前会话的文本客户端，控制器在 menuAction: 里先接走了
             MenuAction::OpenSymbolPanel => {}
+        }
+    }
+
+    /// 标点切换键：翻转中文模式的全半角标点，落盘后热加载。英文模式一律半角，调用方不在英文模式下调。
+    pub fn toggle_punctuation(&mut self) {
+        let full_width = !self.settings.config().general.full_width_punctuation;
+        tracing::debug!(full_width, "切换全角标点");
+        if self
+            .settings
+            .set_bool("general", "full_width_punctuation", full_width)
+        {
+            self.apply_config(false);
         }
     }
 
@@ -280,20 +301,6 @@ impl Host {
                 }
                 Err(error) => tracing::warn!(%error, "修饰键组合不合法，未改"),
             },
-            (Setting::DeleteCandidateKeys, SettingValue::Text(text)) => {
-                match text.parse::<Modifiers>() {
-                    Ok(chosen) => {
-                        let (first, second) = config.shortcut.translation_keys();
-                        if chosen == first || chosen == second {
-                            tracing::warn!("删候选的快捷键不能与译词快捷键相同，未改");
-                        } else {
-                            self.settings
-                                .set_value("shortcut", "delete_candidate", chosen.key());
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "修饰键组合不合法，未改"),
-                }
-            }
             (Setting::TranslateSelectionKeys, SettingValue::Text(text)) => {
                 match text.parse::<KeyCombo>() {
                     Ok(combo) => {
@@ -330,11 +337,6 @@ impl Host {
                     "shortcut",
                     "translate_selection",
                     defaults.translate_selection.key_string(),
-                );
-                self.settings.set_value(
-                    "shortcut",
-                    "delete_candidate",
-                    defaults.delete_candidate.key(),
                 );
                 let values: Vec<String> = defaults
                     .switch_mode
@@ -383,9 +385,6 @@ impl Host {
             }
             (Setting::CloudSlots, SettingValue::Index(index)) => {
                 self.settings.set_value("predict", "slots", index as i64);
-            }
-            (Setting::Traditional, SettingValue::Bool(on)) => {
-                self.settings.set_bool("general", "traditional", on);
             }
             (Setting::EnglishCandidates, SettingValue::Bool(on)) => {
                 self.settings.set_bool("general", "english_candidates", on);
@@ -448,8 +447,20 @@ impl Host {
             }
             // 五笔：勾上就是 86 版，取消就是关。与上面的拼音方案同时开着就是混输。
             (Setting::Wubi, SettingValue::Bool(on)) => {
+                self.settings.set_value(
+                    "general",
+                    "code",
+                    if on { code_schemes::WUBI86 } else { "off" },
+                );
+            }
+            // 弹出菜单按 TraditionalVariant::ALL 的顺序，第 0 项是简体
+            (Setting::Traditional, SettingValue::Index(index)) => {
+                let key = TraditionalVariant::ALL
+                    .get(index)
+                    .unwrap_or(&TraditionalVariant::Off)
+                    .key();
                 self.settings
-                    .set_value("general", "wubi", if on { "wubi86" } else { "" });
+                    .set_value("general", "traditional_variant", key);
             }
             // 文本框失焦也会发 action：值没变就不写，免得每次切窗口都重写一遍配置
             (Setting::BaseUrl, SettingValue::Text(text)) => {
@@ -581,4 +592,13 @@ impl Host {
                 .set_value("general", &format!("{style}_font_size"), size);
         }
     }
+}
+
+/// 随包的设置程序；直接跑二进制（不在 .app 里）或包里缺它时为 `None`。
+fn settings_app() -> Option<std::path::PathBuf> {
+    let bundle = objc2_foundation::NSBundle::mainBundle()
+        .bundlePath()
+        .to_string();
+    let app = std::path::Path::new(&bundle).join("Contents/Applications/QingjianSettings.app");
+    app.is_dir().then_some(app)
 }

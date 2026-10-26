@@ -43,13 +43,33 @@ pub enum Command {
         #[arg(long)]
         emit_ambiguous: Option<PathBuf>,
 
-        /// 额外并入的词（`词\t次数`，`mine` 挖出来的 oov-candidates.tsv，可给多个）：词库里没有的按次数当词频加进去，读音同领域词
+        /// 额外并入的词（`词\t拼音\t次数`，拼音可空：`mine` 挖出来的 oov-filtered.tsv，可给多个）：词库里没有的按次数当词频加进去，读音同领域词
         #[arg(long)]
         extra_words: Vec<PathBuf>,
 
         /// 领域词在语料里出现不少于这个次数就留在基础词库，否则拆到 dicts/<领域>.qj
         #[arg(long, default_value_t = 50)]
         domain_keep_min: u64,
+
+        /// 青简词库全量（数字声调版 `词\t拼音\t权重`）：已有的词补上声调，没有的换算词频，已清洗的写 dict-cleaned.tsv、其余写 dict-general.tsv
+        /// 与 dicts/general.qj（都不进语言模型分词）
+        #[arg(long)]
+        general: Option<PathBuf>,
+
+        /// 青简词库已清洗的子集（同格式，只看第一列），这些词与基础词库同一档
+        #[arg(long, requires = "general")]
+        cleaned: Option<PathBuf>,
+    },
+
+    /// 单字声调表：通用词表（带数字声调）→ tones.tsv（`字\t带调音节…`），编进 Core 给注音按声调排序。
+    /// 生成后放到 `crates/qingjian-core/data/tones.tsv`（`--out-dir crates/qingjian-core/data`）
+    Tones {
+        /// 通用词表（`word\tpinyin\t…`，首行表头）
+        #[arg(
+            long,
+            default_value = "assets/lexicon/02_common/modern_chinese_common_words.tsv"
+        )]
+        words: PathBuf,
     },
 
     /// 形码码表（五笔）：Rime `.dict.yaml` → `词\t编码\t词频`。词频由青简词库按词面回填，不用码表自带的权重
@@ -61,9 +81,27 @@ pub enum Command {
         #[arg(long, default_value = "assets/lexicon/dict.tsv", num_args = 1..)]
         frequency: Vec<PathBuf>,
 
-        /// 输出文件名（写在 --out-dir 下）
-        #[arg(long, default_value = "wubi86.tsv")]
+        /// 输出文件名（写在 --out-dir 下）；缺省是形码方案目录里码表的缺省名
+        #[arg(long, default_value = "table.tsv")]
         name: String,
+    },
+
+    /// 五笔字根图的字形：字根表（`assets/schemes/wubi86/roots86.tsv`）+ 思源黑体 → SVG 路径表（写在 --out-dir 下）
+    WubiRoots {
+        /// 思源黑体 SC Regular（`SourceHanSansSC-Regular.otf`，不进仓库）
+        font: PathBuf,
+
+        /// 字根表
+        #[arg(long, default_value = "assets/schemes/wubi86/roots86.tsv")]
+        spec: PathBuf,
+
+        /// 输出文件名
+        #[arg(long, default_value = "roots86-glyphs.tsv")]
+        name: String,
+
+        /// 把还没挑笔画（`?`）的部件画成一张笔画编号图（PNG）
+        #[arg(long)]
+        sheet: Option<PathBuf>,
     },
 
     /// CC-CEDICT `cedict_ts.u8` → glossary-en.tsv
@@ -196,7 +234,7 @@ pub enum Command {
         /// 打包哪种数据
         kind: PackKind,
 
-        /// 输入文件；`dict` 一个 TSV，`lm` 两个（一元表、二元表），`model` 一个目录。缺省从输出目录里找同名 TSV（`model` 缺省 data/models/hanzhang-zhiwei）
+        /// 输入文件；`dict` 一个或几个 TSV（几个合成一本；缺省 dict.tsv，有 dict-cleaned.tsv 就一起），`lm` 两个（一元表、二元表），`model` 一个目录。缺省从输出目录里找同名 TSV（`model` 缺省 data/models/hanzhang-zhiwei）
         #[arg(long, num_args = 1..)]
         input: Vec<PathBuf>,
 

@@ -8,8 +8,9 @@ use std::time::Instant;
 
 use qingjian_core::{EmojiTable, Engine, Language};
 use qingjian_dictionary::{Dictionary, WordList};
-use qingjian_learning::{FrequencyLearner, InputLog, UsageStats, VocabularyBook};
-use qingjian_platform::{Config, code_tables, extra_dictionaries};
+use qingjian_learning::{FrequencyLearner, InputLog, PanelUsage, UsageStats, VocabularyBook};
+use qingjian_platform::code_tables::AuxCodeSources;
+use qingjian_platform::{Config, extra_dictionaries};
 use qingjian_translate::{Glossary, LayeredTranslator, LevelTable, PersonalGlossary};
 
 use crate::error::ServerError;
@@ -40,7 +41,8 @@ pub fn assemble(spec: &AssemblySpec) -> Result<Engine, ServerError> {
     }
     if let Some(dir) = &spec.user_dir {
         engine = engine
-            .with_usage_meter(Box::new(UsageStats::open(dir.join("usage.tsv"))))
+            .with_usage_meter(Box::new(UsageStats::open(dir)))
+            .with_panel_history(Box::new(PanelUsage::open(dir)))
             .with_vocabulary_tracker(Box::new(load_vocabulary(dir, spec.levels_dir.as_deref())));
         if spec.input_log {
             let path = dir.join("input-log.jsonl");
@@ -53,11 +55,13 @@ pub fn assemble(spec: &AssemblySpec) -> Result<Engine, ServerError> {
         user_dicts_dir(spec.user_dir.as_deref()).as_deref(),
         &spec.dictionaries,
     ));
-    engine.set_aux_codes(code_tables::load(
-        spec.bundled_codes_dir.as_deref(),
-        user_codes_dir(spec.user_dir.as_deref()).as_deref(),
-        &spec.aux_code,
-    ));
+    let aux_sources = AuxCodeSources {
+        bundled_codes: spec.bundled_codes_dir.clone(),
+        user_codes: user_codes_dir(spec.user_dir.as_deref()),
+        bundled_schemes: spec.bundled_schemes_dir.clone(),
+        user_dir: spec.user_dir.clone(),
+    };
+    engine.set_aux_codes(aux_sources.load(&spec.aux_code));
     if let Some(path) = &spec.english_glossary {
         match Glossary::from_path(Language::Chinese, path) {
             Ok(glossary) => {

@@ -16,7 +16,7 @@ impl Engine {
     /// 返回开没开（目前总是开）。
     pub fn open_symbol_panel(&mut self) -> bool {
         if self.composition.is_empty() {
-            self.panel = Some(SymbolPanel::new("", Vec::new()));
+            self.panel = Some(SymbolPanel::new("", Vec::new(), self.panel_history.uses()));
             return true;
         }
         let items = self
@@ -24,7 +24,11 @@ impl Engine {
             .map(|query| query.candidates.items)
             .unwrap_or_default();
         let results = self.search_panel(&items);
-        self.panel = Some(SymbolPanel::new(self.composition.text(), results));
+        self.panel = Some(SymbolPanel::new(
+            self.composition.text(),
+            results,
+            self.panel_history.uses(),
+        ));
         true
     }
 

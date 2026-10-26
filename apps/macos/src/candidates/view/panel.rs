@@ -6,16 +6,15 @@ use objc2::rc::Retained;
 use objc2_app_kit::{NSBezierPath, NSColor, NSFont};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
-use qingjian_core::GRID_ROWS;
+use qingjian_core::{GRID_ROWS, PANEL_COLUMNS};
 
 use super::CandidateView;
 use crate::candidates::PanelMouse;
 use crate::candidates::frame::Frame;
 use crate::candidates::panel_tabs::PanelTabs;
 
-/// 面板尺寸固定，换组换分类窗口不跳：一行 [`GRID_COLUMNS`] 个方格、[`GRID_ROWS`] 行，内容少的分类下面留空。
-/// 颜文字这类宽条目少放几格（壳按内容定列数），格子拉宽、总宽不变。
-const GRID_COLUMNS: usize = 10;
+/// 面板尺寸固定，换组换分类窗口不跳：一行 [`PANEL_COLUMNS`] 个方格、[`GRID_ROWS`] 行，内容少的分类下面留空。
+/// 颜文字这类宽条目少放几格（列数由 Core 按内容定），格子拉宽、总宽不变。
 const CELL: f64 = 46.0;
 
 /// 方格里的符号与 emoji 用大字；格子拉宽的（颜文字）用正常字号，才放得下。
@@ -118,14 +117,14 @@ impl CandidateView {
     }
 
     fn grid_width() -> f64 {
-        CELL * GRID_COLUMNS as f64 + CELL_GAP * (GRID_COLUMNS - 1) as f64
+        CELL * PANEL_COLUMNS as f64 + CELL_GAP * (PANEL_COLUMNS - 1) as f64
     }
 
     /// 这一帧的格子：总宽固定，按列数均分；列数少的（颜文字）用正常字号。
     fn panel_cell(&self, frame: &Frame) -> (Retained<NSFont>, NSSize) {
-        let columns = frame.columns.clamp(1, GRID_COLUMNS);
+        let columns = frame.columns.clamp(1, PANEL_COLUMNS);
         let width = (Self::grid_width() - CELL_GAP * (columns - 1) as f64) / columns as f64;
-        let points = if columns >= GRID_COLUMNS {
+        let points = if columns >= PANEL_COLUMNS {
             ITEM_POINTS
         } else {
             WIDE_ITEM_POINTS
@@ -214,7 +213,7 @@ impl CandidateView {
         let divider = NSRect::new(NSPoint::new(left, y), NSSize::new(right - left, 1.0));
         y += 1.0 + SECTION_GAP;
 
-        let columns = frame.columns.clamp(1, GRID_COLUMNS);
+        let columns = frame.columns.clamp(1, PANEL_COLUMNS);
         let grid_origin = NSPoint::new(
             left + ((right - left) - Self::grid_width()).max(0.0) / 2.0,
             y,

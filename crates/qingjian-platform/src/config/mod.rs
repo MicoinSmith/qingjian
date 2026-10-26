@@ -2,18 +2,23 @@ mod appearance;
 mod apps;
 mod aux_code;
 mod candidate_renderer;
+mod code_rules;
 mod dictionaries;
 mod emoji_count;
 mod font_size;
 mod general;
 mod highlight_keys;
 mod key_combo;
+mod key_hint_mode;
 mod layout_mode;
+mod legacy_traditional;
 mod log_level;
 mod model;
 mod modifiers;
+mod numpad_digit;
 mod optional_key_combo;
 mod page_keys;
+mod phrases;
 mod preedit_mode;
 mod scheme;
 mod shift_letter;
@@ -22,6 +27,7 @@ mod status_bar;
 mod switch_key;
 mod update;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use qingjian_core::FuzzyRules;
@@ -38,19 +44,23 @@ pub use apps::{
 };
 pub use aux_code::AuxCodeConfig;
 pub use candidate_renderer::CandidateRenderer;
+pub use code_rules::CodeRules;
 pub use dictionaries::{DEFAULT_DOMAINS, DictionariesConfig};
 pub use emoji_count::EmojiCount;
 pub use font_size::FontSize;
 pub use general::{
-    DEFAULT_PAGE_KEYS, DEFAULT_THEME, GeneralConfig, LEARNING_LANGUAGE_OFF, MAX_PAGE_SIZE,
-    PAGE_KEY_OPTIONS,
+    DEFAULT_KEY_HINT_OPACITY, DEFAULT_PAGE_KEYS, DEFAULT_THEME, GeneralConfig,
+    LEARNING_LANGUAGE_OFF, MAX_PAGE_SIZE, PAGE_KEY_OPTIONS,
 };
 pub use highlight_keys::HighlightKeys;
 pub use key_combo::KeyCombo;
+pub use key_hint_mode::KeyHintMode;
 pub use layout_mode::LayoutMode;
+pub use legacy_traditional::LegacyTraditional;
 pub use log_level::LogLevel;
-pub use model::LocalModelConfig;
+pub use model::{LocalModel, LocalModelConfig, ZhiyiTier};
 pub use modifiers::Modifiers;
+pub use numpad_digit::NumpadDigit;
 pub use page_keys::PageKeys;
 pub use preedit_mode::PreeditMode;
 pub use scheme::{Scheme, scheme_label, scheme_name};
@@ -69,8 +79,8 @@ pub struct Config {
     /// 常规：学习语言、每页候选数、翻页键、外观。
     pub general: GeneralConfig,
 
-    /// 自定义短语；保存和读取均检查位置冲突。
-    #[serde(deserialize_with = "deserialize_phrases")]
+    /// 自定义短语；保存和读取均检查位置冲突。读的时候写错的条目只跳过它自己（见 `phrases`）。
+    #[serde(deserialize_with = "phrases::deserialize")]
     pub custom_phrases: Vec<qingjian_core::CustomPhrase>,
 
     /// 快捷键：前缀模式键（表达式 / 问字）与上屏译词的修饰键组合。
@@ -99,14 +109,9 @@ pub struct Config {
 
     /// 检查更新。
     pub update: UpdateConfig,
-}
 
-fn deserialize_phrases<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<qingjian_core::CustomPhrase>, D::Error> {
-    let phrases = Vec::<qingjian_core::CustomPhrase>::deserialize(deserializer)?;
-    qingjian_core::custom_phrase::validate_phrases(&phrases).map_err(serde::de::Error::custom)?;
-    Ok(phrases)
+    /// 各形码方案的按键规则（`[code.<id>]`），按方案 id；没写的方案按它自己的 `scheme.toml`。
+    pub code: BTreeMap<String, CodeRules>,
 }
 
 /// 模板的 `[apps]` 一节（Linux）：应用按 fcitx5 认到的名字（X11 是 WM_CLASS，Wayland 是 app_id）。
@@ -167,7 +172,7 @@ english_candidates_on = [
 }
 
 /// 模板 `[shortcut]` 一节里的修饰键组合（macOS 命名）。缺省值两个平台一样，只是写法与注释按平台的键名。
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 macro_rules! template_shortcut_keys {
     () => {
         r#"# 中 / 英模式切换键，可多选：shift 单击 / control 单击 / ctrl+alt+space 组合键；[] 不用键切换。
@@ -181,8 +186,21 @@ translation_second = "shift+option"
 # 把应用里选中的文字译成学习语言（要开着云服务）：译文先出现在候选窗口，回车替换选中的文字，Esc 保留原文
 # 修饰键 + 一个字母或数字，任意组合；避开 ⌘T 这类应用常用键
 translate_selection = "control+option+t"
-# 数字键配这些修饰键删掉候选：用户词（云端选过的、自动造的）整个删掉，词库里的词清掉对它的学习记录。组句中要打感叹号先把词上屏
-delete_candidate = "shift"
+"#
+    };
+}
+
+/// Linux 与 FreeBSD 默认避开桌面常用的 Ctrl + Alt + T（打开终端）。
+#[cfg(not(any(windows, target_os = "macos")))]
+macro_rules! template_shortcut_keys {
+    () => {
+        r#"# 中 / 英模式切换键，可多选：shift 单击（缺省）/ control 单击 / ctrl+alt+space 组合键；[] 不用键切换，单击 Shift 原样交给应用
+switch_mode = ["shift"]
+# 数字键配这些修饰键上屏候选的译词：translation 第一个译词，translation_second 第二个
+translation = "alt"
+translation_second = "shift+alt"
+# 把应用里选中的文字译成学习语言（要开着云服务）；Ctrl + Alt + T 常被桌面占用来打开终端
+translate_selection = "alt+shift+t"
 "#
     };
 }
@@ -200,8 +218,8 @@ translation = "ctrl"
 translation_second = "shift+ctrl"
 # 把应用里选中的文字译成学习语言（要开着云服务）：译文先出现在候选窗口，回车替换选中的文字，Esc 保留原文
 translate_selection = "ctrl+alt+t"
-# 数字键配这些修饰键删掉候选：用户词（云端选过的、自动造的）整个删掉，词库里的词清掉对它的学习记录。组句中要打感叹号先把词上屏
-delete_candidate = "shift"
+# Windows 组句中按需调用 AI
+predict = "ctrl+alt+j"
 "#
     };
 }
@@ -242,12 +260,17 @@ preedit = "both"
 # 英文模式（Caps Lock 亮着）是否给英文候选：Tab 或方向键选词，空格、回车、标点仍原样上屏敲的字母；false 就是纯直通
 english_candidates = true
 
-# 繁体输出模式。开启后上屏繁体，不影响词库和个人词频的简体记录。
-traditional = false
+# 繁体输出：off 简体 / taiwan 台湾字形 / hongkong 香港字形 / standard 通用字形；三档都只换字形不换用语（软件 → 軟件）
+# 候选窗口里看到的就是转换后的字；词库与学习数据始终是简体，改回 off 之前学到的词照样在。旧版的 traditional = true 按台湾字形读
+traditional_variant = "off"
 # 中文模式下整段输入是英文词时（hello / key）是否让中文候选排第一、英文词第二；缺省 false：拼音不像话的输入英文词排第一
 chinese_first = false
 # 中文模式下整段是英文词或英文词的开头时给英文候选与补全（hello、compa → company）；false 时中文模式只出中文，英文模式不受影响
 english_in_chinese = true
+# 中文模式下英文候选（精确词 + 补全）最多几个，1–4；1 时只留最靠前的一条
+english_max_in_chinese = 4
+# 有中文候选时英文最高排到第几位，1–9；1 为不限制，没有中文候选时英文照旧第一
+english_min_position = 1
 # 候选后面一次最多配几个 emoji（kaixin → 开心 😄），0–3；0 时候选里只有字词
 emoji = 3
 # 候选后面一次最多配几个颜文字（ku → 哭 (T_T)），0–3
@@ -259,10 +282,12 @@ auto_space = false
 # 中文模式下按住 Shift 敲的字母：passthrough 拼音原样上屏、字母交给应用（缺省，与以前一致）/ compose 收进组句
 # 缓冲区参与匹配，这样 Cpan 与 cpan 一样能出「C盘」。英文模式与英文直输段（no-Way）不受影响
 shift_letter = "passthrough"
+# Windows 中文组句中的小键盘数字：select 选择候选（缺省）/ direct 直接输入数字；主键盘数字不受影响
+numpad_digit = "select"
 # 内置英文模式：开着时单击切换键（[shortcut] switch_mode）或 Caps Lock 亮着进英文模式
-# 关掉后青简保持中文模式，切换键与语言栏按钮都不再切过去；要打英文请用系统快捷键（Win+Space）切到别的输入法。只有 Windows 用，macOS 的中英切换是 Caps Lock
+# 关掉后青简保持中文模式，切换键与语言栏按钮都不再切过去；要打英文请用系统快捷键（Win+Space）切到别的输入法。Windows 与 Linux 用，macOS 的中英切换是 Caps Lock
 english_mode = true
-# Windows：初始英文；按应用记忆时也用于没有记录的应用
+# 初始英文：Windows 是青简启动时，按应用记忆时也用于没有记录的应用；Linux 是新打开的应用和窗口
 default_english = false
 # Windows：按应用 exe 名记住中英状态，重启青简后重新使用初始模式
 remember_mode_per_app = false
@@ -278,18 +303,22 @@ punct_commits = false
 aux_code_key = ";"
 # 候选上是否显示码（方括号紧跟在候选词后面，如「鹤[rbm] crane」）。缺省关
 aux_code_show = false
+# 候选窗口顶部的拼音行按高亮候选显示带调拼音（gān'gà），应用里的拼音不变；macOS、Windows 用。缺省关
+show_tones = false
 # 码段删空后是否留在辅码状态：true 删空后 ; 仍在、候选全部回来，再按一次退格才退出辅码；false 删空即回拼音状态
 aux_code_keep_empty = true
-# 拼音方案：留空或 pinyin 为全拼 / xiaohe 小鹤双拼 / ziranma 自然码 / microsoft 微软双拼 / sogou 搜狗双拼 / abc 智能ABC / xiaolang 小浪双拼 / shoudao 首道双拼 /
-# zhuyin 大千注音 / none 关（只用形码，见下面的 wubi）。
-# 双拼与注音下 v / u / i 都是按键，表达式模式没有入口，问字只能靠 question_mark 打开后用 ? 进；微软、搜狗方案的 ; 键是 ing
+# 拼音方案：留空或 pinyin 为全拼 / xiaohe 小鹤双拼 / ziranma 自然码 / microsoft 微软双拼 / sogou 搜狗双拼 / abc 智能ABC / xiaolang 小浪双拼 / shoudao 首道双拼 / jiajia 拼音加加 / ziguang 紫光双拼 /
+# zhuyin 大千注音 / none 关（只用形码，见下面的 code）。
+# 双拼与注音下 v / u / i 都是按键，表达式模式没有入口，问字只能靠 question_mark 打开后用 ? 进；微软、搜狗、紫光方案的 ; 键是 ing
 scheme = ""
 # 双拼方案下 preedit 显示原始按键（如 ljse）还是展开成全拼（lan'se）；缺省 false（展开成全拼）
 shuangpin_raw_preedit = false
-# 五笔（86 版形码）：留空为关，wubi86 为开。**与上面的拼音方案同时开着就是混输**——
-# 两边都出候选，编码打全的五笔词在前、其次拼音（打不出的字直接打拼音）；候选旁的译文、生词记录与学习照常。
-# 只用五笔的话把 scheme 写成 none；第 5 个字母起五笔已经查不到东西，自动只剩拼音。
-wubi = ""
+# 一段拼音分几次选完时，先选的词留在输入框里、整段选完才一起上屏，退格先撤回最后一次选择；false 为选了就上屏
+hold_selections = true
+# 形码方案：留空或 off 为关，wubi86 为五笔（86 版），也可以写用户数据目录 schemes/ 下自己放的方案目录名。
+# **与上面的拼音方案同时开着就是混输**——两边都出候选，编码打全的形码词在前、其次拼音（打不出的字直接打拼音）；
+# 候选旁的译文、生词记录与学习照常。只用形码的话把 scheme 写成 none，这时四码唯一自动上屏、满码再敲字母顶字。
+code = ""
 # 日志级别：info 缺省 / debug 详细（会记录敲的拼音与上屏的文字，配合作者排查问题时再开）。日志在 ~/Library/Logs/Qingjian/
 log_level = "info"
 # 输入日志：每次上屏记一行到数据目录的 input-log.jsonl（敲的键、看到的候选、选了什么），只写在这台电脑上，不上传；
@@ -297,15 +326,15 @@ log_level = "info"
 input_log = true
 # 学习输入习惯：按你的选择调整候选顺序、记新词与敲错纠正。false 不再学，已学的仍参与排序；学习数据在数据目录，删掉文件即清空
 learning = true
-# 把系统设置「键盘 → 文本替换」里的条目当自定义短语：输入码（小写字母）敲全后短语出现在该码最靠前的空位；只有 macOS 用
+# 把系统设置「键盘 → 文本替换」里的条目当自定义短语：输入码（小写字母）敲全后出现，排在同权重的自定义短语之后；只有 macOS 用
 system_text_replacements = true
 
-# 自定义短语示例：取消下面各行注释后启用；同码同位置不能重复。
+# 自定义短语示例：取消下面各行注释后启用；同一个输入码下按权重从高到低排在普通候选前面。
 # [[custom_phrases]]
 # code = "ww"       # 输入码：1–32 个小写英文字母
 # text = "；"       # 原样上屏的文本，可包含空格与换行
-# position = 1      # 固定候选位置：1–9
-# enabled = true    # 是否启用；停用仍保留位置
+# weight = 10       # 权重：1–999，可以相同，相同的按文件里的先后
+# enabled = true    # 是否启用
 
 [shortcut]
 # Windows：切换当前模式的全 / 半角标点；空串禁用，可设为 "ctrl+." 或其他修饰键加字母、数字、句号
@@ -357,8 +386,14 @@ enabled = false
 disabled = []
 
 [model]
-# 本地整句模型：随包的小模型在本机给整句候选重新排序，全程离线；停顿后几十毫秒生效。关掉只用词库统计
+# 本地模型：在本机给候选重新排序，全程离线；停顿后几十毫秒生效。关掉只用词库统计
 enabled = true
+# 用哪个：tongbian 含章·通变（随包）/ zhiwei 含章·知微 / zhiyi 知意；后两个先在设置的「实验功能」里下载，没下载就用通变
+name = "tongbian"
+# 知意的档位：saver 省电 / balanced 均衡 / accurate 准确（比的候选更多、看的前文更长，也更费电）
+zhiyi_tier = "balanced"
+# 应用读不到光标前的文字时，拿这个应用、这个输入框里刚打的字当前文；多少秒没打字就不算（0 表示一直算）
+context_memory_seconds = 60
 
 [predict]
 # 云联想：把光标附近的文本发到下面的接口，让模型补全整句 / 联想下文。默认关闭。
@@ -375,6 +410,8 @@ api_key_env = "QINGJIAN_API_KEY"
 # 单次请求超时（毫秒）、停止敲键多久后才发请求（毫秒）
 timeout_ms = 5000
 debounce_ms = 300
+# Windows 自动联想开关；关闭后在组句中按 Ctrl+Alt+J 手动请求，快捷键在 [shortcut] predict 中设置
+automatic = true
 # 两次网络请求起始之间的最短间隔，失败也计入；缓存命中不等待
 min_interval_ms = 3000
 # 光标前 / 后最多发多少个字符——这是发往云端的上下文上限
@@ -384,6 +421,10 @@ lookahead = 32
 slots = 2
 # 组句中除了词候选还要不要整句补全（preedit 右侧，Tab 接受）
 sentence = true
+# 本地整句候选右侧是否显示服务返回的译文；仅发送该候选文本，不发送光标前后上下文
+sentence_translation = false
+# 上屏的整句（含分几次打完的一句）翻成学习语言，记进生词本的时间线；只发那一句，不发光标前后的文字
+vocabulary_translation = true
 
 [status_bar]
 # 桌面上常驻、可拖动的悬浮状态条（Windows）：「中 / 英」格点一下切换模式（开着双拼时还显示方案名）、「，。」格切全角 / 半角标点、齿轮打开设置。
@@ -393,6 +434,8 @@ enabled = false
 # 记住的屏幕位置（物理像素，拖动后自动写入）；留空则首次出现在屏幕右下角
 # x = 0
 # y = 0
+# 大小（百分比，60–150）；不跟候选字号走
+size = 100
 
 [update]
 # 检查更新：每天向官网（qingjian.app）读一次版本索引，有新版在菜单与设置的「关于」页提示；请求不带任何标识，不自动下载安装
@@ -403,6 +446,11 @@ channel = "stable"
 );
 
 impl Config {
+    /// 用户给形码方案 `id` 改的按键规则；没改过时全是 `None`。
+    pub fn code_rules(&self, id: &str) -> CodeRules {
+        self.code.get(id).copied().unwrap_or_default()
+    }
+
     /// 保存自定义短语列表，冲突时不修改文件。
     pub fn set_custom_phrases(
         path: &Path,
@@ -415,13 +463,27 @@ impl Config {
             Err(e) => return Err(e.to_string()),
         };
         let mut document: DocumentMut = source.parse::<DocumentMut>().map_err(|e| e.to_string())?;
-        let old = document
+        let existing = document
             .get("custom_phrases")
             .and_then(toml_edit::Item::as_array_of_tables)
             .cloned()
             .unwrap_or_default();
+        // 读配置时跳过的条目界面上看不到，保存时原样留在文件里，等用户自己改
+        let checked = phrases::check(existing.iter().map(|table| {
+            toml::from_str::<qingjian_core::CustomPhrase>(&table.to_string())
+                .map_err(|e| e.message().to_owned())
+        }));
+        let mut old = toml_edit::ArrayOfTables::new();
+        let mut skipped = Vec::new();
+        for (table, item) in existing.iter().zip(&checked) {
+            if item.is_ok() {
+                old.push(table.clone());
+            } else {
+                skipped.push(table.clone());
+            }
+        }
         let mut used = std::collections::BTreeSet::new();
-        // 先按输入码和位置匹配，重排或删除时注释跟随原规则。
+        // 先按输入码和文本匹配，重排或删除时注释跟随原规则。
         let mut matches: Vec<_> = phrases
             .iter()
             .map(|p| {
@@ -430,8 +492,8 @@ impl Config {
                     .enumerate()
                     .find(|(_, t)| {
                         t.get("code").and_then(toml_edit::Item::as_str) == Some(p.code.as_str())
-                            && t.get("position").and_then(toml_edit::Item::as_integer)
-                                == Some(p.position as i64)
+                            && t.get("text").and_then(toml_edit::Item::as_str)
+                                == Some(p.text.as_str())
                     })
                     .map(|(i, _)| i);
                 if let Some(i) = found {
@@ -440,7 +502,7 @@ impl Config {
                 found
             })
             .collect();
-        // 等长列表中修改了输入码或位置的条目，沿用其未被占用的原表。
+        // 等长列表中修改了输入码或文本的条目，沿用其未被占用的原表。
         if old.len() == phrases.len() {
             for (i, matched) in matches.iter_mut().enumerate() {
                 if matched.is_none() && used.insert(i) {
@@ -454,10 +516,13 @@ impl Config {
                 .and_then(|i| old.get(i))
                 .cloned()
                 .unwrap_or_default();
+            if t.contains_key("position") {
+                t = phrases::position_to_weight(&t);
+            }
             for (key, mut value) in [
                 ("code", toml_edit::Value::from(p.code.as_str())),
                 ("text", toml_edit::Value::from(p.text.as_str())),
-                ("position", toml_edit::Value::from(p.position as i64)),
+                ("weight", toml_edit::Value::from(i64::from(p.weight))),
                 ("enabled", toml_edit::Value::from(p.enabled)),
             ] {
                 if let Some(previous) = t.get(key).and_then(toml_edit::Item::as_value) {
@@ -471,6 +536,9 @@ impl Config {
             // 序列化按文档位置排序；统一锚点后，同组条目使用本次列表顺序。
             t.set_position(old.iter().filter_map(toml_edit::Table::position).min());
             tables.push(t);
+        }
+        for table in skipped {
+            tables.push(table);
         }
         document["custom_phrases"] = toml_edit::Item::ArrayOfTables(tables);
         write_file(path, &document.to_string()).map_err(|e| e.to_string())
@@ -529,15 +597,11 @@ impl Config {
             path: path.to_owned(),
             source: Box::new(source),
         })?;
-        // 分节不存在时先建成标准表，否则 toml_edit 会写成顶层的行内表 `predict = { enabled = true }`
-        if !document.get(section).is_some_and(|item| item.is_table()) {
-            document[section] = toml_edit::table();
-        }
         // 旧写法（外观写在 theme 里）要在改键之前认出来：写的正是 theme 时，新值会把它盖掉
         let legacy = (section == "general" && matches!(key, "appearance" | "theme"))
             .then(|| legacy_appearance(&document))
             .flatten();
-        document[section][key] = toml_edit::value(value);
+        section_table(&mut document, section)[key] = toml_edit::value(value);
         if let Some(old) = legacy {
             migrate_legacy_theme(&mut document, old);
         }
@@ -567,14 +631,11 @@ impl Config {
             path: path.to_owned(),
             source: Box::new(source),
         })?;
-        if !document.get(section).is_some_and(|item| item.is_table()) {
-            document[section] = toml_edit::table();
-        }
         let mut array = toml_edit::Array::new();
         for value in values {
             array.push(value.as_ref());
         }
-        document[section][key] = toml_edit::value(array);
+        section_table(&mut document, section)[key] = toml_edit::value(array);
         write_file(path, &document.to_string())
     }
 
@@ -629,6 +690,23 @@ fn migrate_legacy_theme(document: &mut DocumentMut, old: Appearance) {
 }
 
 /// 原子写配置文件；数据目录还没有就先建（新账户第一次打开设置时输入法可能还没跑过）。
+/// 取（没有就建）分节 `section`，`code.wubi86` 这样带点的是嵌套分节。
+/// 一律建成标准表：否则 toml_edit 会写成顶层的行内表 `predict = { enabled = true }`；
+/// 嵌套时外层是隐式的，文件里只出现 `[code.wubi86]`、不多出一个空的 `[code]`。
+fn section_table<'a>(document: &'a mut DocumentMut, section: &str) -> &'a mut toml_edit::Table {
+    let mut table = document.as_table_mut();
+    let mut parts = section.split('.').peekable();
+    while let Some(part) = parts.next() {
+        if !table.get(part).is_some_and(|item| item.is_table()) {
+            let mut child = toml_edit::Table::new();
+            child.set_implicit(parts.peek().is_some());
+            table.insert(part, toml_edit::Item::Table(child));
+        }
+        table = table[part].as_table_mut().expect("刚确认过是表");
+    }
+    table
+}
+
 fn write_file(path: &Path, text: &str) -> Result<(), ConfigError> {
     let write = || {
         if let Some(dir) = path.parent() {

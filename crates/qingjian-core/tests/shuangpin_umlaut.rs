@@ -13,6 +13,8 @@ fn umlaut_keys_decode_to_standard_pinyin() {
         (Scheme::Abc, 'v'),
         (Scheme::Shoudao, 'v'),
         (Scheme::Xiaolang, 'x'),
+        (Scheme::Jiajia, 'v'),
+        (Scheme::Ziguang, 'v'),
     ] {
         for (initial, expected) in [('j', "ju"), ('q', "qu"), ('x', "xu"), ('y', "yu")] {
             let keys = format!("{initial}{key}");
@@ -31,7 +33,8 @@ fn umlaut_keys_decode_to_standard_pinyin() {
     assert_eq!(Scheme::Sogou.decode("gy").pinyin(), "guai");
     assert_eq!(Scheme::Sogou.decode("gu").pinyin(), "gu");
     assert_eq!(Scheme::Sogou.decode("ju").pinyin(), "ju");
-    assert_eq!(Scheme::Sogou.decode("lv").tail(), "lv");
+    // 搜狗没有 ü 键的双拼写法：`lv` 两键配不出音节，按简拼读（l + zh）
+    assert_eq!(Scheme::Sogou.decode("lv").pinyin(), "l'zh");
 }
 
 #[test]
@@ -61,6 +64,6 @@ fn sogou_umlaut_keys_query_and_commit_by_syllable() {
             .unwrap();
         engine.commit(candidate);
         assert_eq!(engine.composition().text(), "x;");
-        assert_eq!(engine.query().unwrap().marked_text(), "xing");
+        assert_eq!(engine.query().unwrap().marked_text(), format!("{word}xing"));
     }
 }

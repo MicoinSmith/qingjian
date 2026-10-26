@@ -17,7 +17,9 @@
     "ink": "#62486e",
     "ui": "#806289",
     "line": "#dab4db",
-    "divider": "#e6d3ec"
+    "divider": "#e6d3ec",
+    "surface": "#fff6fc",
+    "accent": "#f8cbe9"
   },
 
   "text": {

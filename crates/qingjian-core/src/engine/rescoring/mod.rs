@@ -35,7 +35,7 @@ impl Engine {
     }
 
     /// 给模型看的前文：壳给了应用里的光标前文就用它（[`Self::set_rescoring_context`]），
-    /// 否则用本会话最近上屏的字符；长度按 `neural_context` 截。
+    /// 否则用当前应用最近上屏的字符（太久没打的不算）；长度按 `neural_context` 截。
     pub(super) fn rescoring_context(&self) -> String {
         if self.neural_context == 0 {
             return String::new();
@@ -130,22 +130,24 @@ impl Engine {
 
     /// 最近一次查询里有整句路径还没拿到神经分、或有整段还没生成：壳该在用户停顿后调 [`Self::request_rescoring`]。
     pub fn rescoring_pending(&self) -> bool {
-        self.rescorer.is_some() && {
-            let cache = self.neural_cache.borrow();
-            cache.has_wanted() || cache.wanted_generation().is_some()
-        }
+        self.choice_pending()
+            || self.rescorer.is_some() && {
+                let cache = self.neural_cache.borrow();
+                cache.has_wanted() || cache.wanted_generation().is_some()
+            }
     }
 
     /// 把攒着的文本送去后台打分。没接异步打分器或没什么要打的返回 `false`。
     pub fn request_rescoring(&mut self) -> bool {
+        let chose = self.request_choice();
         let Some(worker) = &self.rescorer else {
-            return false;
+            return chose;
         };
         let mut cache = self.neural_cache.borrow_mut();
         let wanted = cache.take_wanted();
         let generate = cache.take_wanted_generation();
         if wanted.is_empty() && generate.is_none() {
-            return false;
+            return chose;
         }
         tracing::debug!(
             texts = wanted.len(),
@@ -161,18 +163,22 @@ impl Engine {
         true
     }
 
-    /// 收后台打好的分。有新分进了缓存返回 `true`，壳该重新 [`Self::query`] 一次；前文已经变了的结果丢掉。
+    /// 收后台打好的分。最近一次请求的结果到了返回 `true`，壳该重新 [`Self::query`] 一次、停止轮询；前文已经变了的分丢掉。
+    ///
+    /// 更早的请求的结果也照样收进缓存，但不返回 `true`：打字比模型快时上一次的结果会先到，
+    /// 壳要是把它当成这一轮的、停了轮询，晚几十毫秒到的这次整句就没人取了（macOS 上 `firefoxliulanqi` 上屏成「覅」）。
     pub fn poll_rescoring(&mut self) -> bool {
+        let mut updated = self.poll_choice();
         let Some(worker) = &self.rescorer else {
-            return false;
+            return updated;
         };
-        let mut updated = false;
+        let latest = worker.latest();
         while let Some(scored) = worker.poll() {
+            updated |= scored.serial == latest;
             let mut cache = self.neural_cache.borrow_mut();
             // 生成的结果自带按键、与前文无关，不跟着打分那边的条件一起作废
             if let Some((keys, texts)) = scored.generated {
                 cache.insert_generated(&keys, texts);
-                updated = true;
             }
             if scored.context != cache.context()
                 || scored.keys != cache.keys()
@@ -183,7 +189,6 @@ impl Engine {
             for (text, score) in scored.texts.iter().zip(scored.scores) {
                 cache.insert(text, score);
             }
-            updated = true;
         }
         updated
     }

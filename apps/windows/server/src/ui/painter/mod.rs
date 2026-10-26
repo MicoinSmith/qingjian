@@ -129,21 +129,28 @@ impl Painter {
             .flatten()
     }
 
+    /// 当前主题（浅色那一份），键位提示窗口按它画键盘。
+    pub(super) fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
     /// 候选窗收起：忘掉上一帧，下次显示不从旧位置过渡。
     pub(super) fn forget(&mut self) {
         self.renderer.forget();
     }
 
-    /// 画状态条。
+    /// 画状态条；`size` 是设置里的大小（百分比）。
     pub(super) fn render_status(
         &mut self,
         cells: &[StatusCell],
         mode: &Mode,
         dark: bool,
         dpi: u32,
+        size: u8,
     ) -> Option<RenderedStatus> {
+        let scale = scale(dpi) * f32::from(size) / 100.0;
         self.renderer
-            .render_status(cells, mode, &self.theme.with_dark(dark), scale(dpi))
+            .render_status(cells, mode, &self.theme.with_dark(dark), scale)
             .inspect_err(|error| tracing::warn!(%error, "状态条渲染失败"))
             .ok()
     }

@@ -38,6 +38,10 @@ pub struct InputSettings {
     /// 否则 Photoshop 画布这类没有文本框的地方收不到 W / H / V 这些单键快捷键。老 Server 不带，按给。
     #[serde(default = "english_candidates_default")]
     pub english_candidates: bool,
+
+    /// 组句中的按需 AI 快捷键；旧 Server 没有这项。
+    #[serde(default)]
+    pub predict: Option<KeyCombo>,
 }
 
 fn english_candidates_default() -> bool {
@@ -53,12 +57,37 @@ impl Default for InputSettings {
             shift_letter_compose: false,
             restore_mode: false,
             english_candidates: true,
+            predict: None,
         }
     }
 }
 
-/// Server 发给 DLL 的消息。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
+mod tests {
+    use super::InputSettings;
+    use crate::config::KeyCombo;
+
+    #[test]
+    fn old_server_settings_disable_the_new_preserved_shortcut() {
+        let input = InputSettings {
+            predict: Some(KeyCombo::PREDICT_DEFAULT),
+            ..InputSettings::default()
+        };
+        let mut wire = serde_json::to_value(input).unwrap();
+        assert_eq!(
+            serde_json::from_value::<InputSettings>(wire.clone()).unwrap(),
+            input
+        );
+        wire.as_object_mut().unwrap().remove("predict");
+        let old = serde_json::from_value::<InputSettings>(wire).unwrap();
+        assert_eq!(old.predict, None);
+        assert_eq!(old.switch_mode, input.switch_mode);
+        assert_eq!(old.english_mode, input.english_mode);
+    }
+}
+
+/// Server 发给 DLL 的消息。`Frame` 带浮点列宽，没有 `Eq`，这里也只有 `PartialEq`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ServerMessage {
     /// 对一次 [`super::ClientMessage::OpenSession`] 的答复：把 DLL 在按键到达之前就要知道的
     /// 设置带过去一次（之后 [`Self::ModeSync`] 的每一拍也带着，改了配置不用重开会话）。
@@ -86,6 +115,11 @@ pub enum ServerMessage {
 
         /// 处理后要绘制的组句状态（preedit + 候选）；空 [`Frame`] 表示收起候选窗口。
         frame: Frame,
+
+        /// 本次按键切换了中 / 英模式时的新模式；没切换为 `None`。
+        /// Linux 插件拿它弹「中」/「英」提示气泡，其余平台忽略。
+        #[serde(default)]
+        english: Option<bool>,
     },
 
     /// 对一次 [`super::ClientMessage::Commit`] 的答复：缓冲区里原样上屏的文本（拼音字母 / 英文模式下敲的字母）；

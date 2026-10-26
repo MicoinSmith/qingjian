@@ -6,6 +6,7 @@ use std::time::{Instant, SystemTime};
 use qingjian_core::Language;
 use qingjian_dictionary::Dictionary;
 use qingjian_platform::{DictionariesConfig, LocalModelConfig, extra_dictionaries};
+use qingjian_predict::PredictConfig;
 
 /// 热加载状态。
 pub(crate) struct ConfigReload {
@@ -29,6 +30,9 @@ pub(crate) struct ConfigReload {
 
     /// 已应用的 `[dictionaries]`。
     pub(super) applied_dictionaries: DictionariesConfig,
+
+    /// 已应用的 `[predict]`。
+    pub(super) applied_predict: PredictConfig,
 
     /// 已应用的 `[model]`。
     pub(super) applied_model: LocalModelConfig,

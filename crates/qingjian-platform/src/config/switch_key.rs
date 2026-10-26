@@ -3,9 +3,9 @@ use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
 /// 一个中 / 英切换键。`shift` / `control` 是**单击**那个修饰键；`ctrl+alt+space` 是组合键
-/// （走 TSF 保留键登记，与「翻译选中文字」同一套机制）。
+/// （Windows 走 TSF 保留键登记，与「翻译选中文字」同一套机制；Linux 由 Server 在按下时认）。
 ///
-/// 平台差异：Windows 三种都认；macOS 只认 `shift`（单击 Shift 切中英，此时 Caps Lock 只管大小写），
+/// 平台差异：Windows、Linux 三种都认；macOS 只认 `shift`（单击 Shift 切中英，此时 Caps Lock 只管大小写），
 /// `control` / `ctrl+alt+space` 在 macOS 上忽略。macOS 始终还能用 Caps Lock 切换（系统级，不受本项影响）。
 ///
 /// 不用 Ctrl + Space：中文 Windows 把它绑成系统的「输入法/非输入法切换」，系统先截走，输入法拿不到。

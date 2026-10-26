@@ -38,6 +38,19 @@ impl Language {
     }
 }
 
+/// 学习语言写这个值表示不显示译文（配置 `[general] learning_language`）。
+pub const LEARNING_LANGUAGE_OFF: &str = "off";
+
+/// 设置里列的学习语言：配置写法与界面名，按这个顺序列出；最后一项是不显示译文。
+pub const LEARNING_LANGUAGES: [(&str, &str); 6] = [
+    ("en", "英语"),
+    ("ja", "日语"),
+    ("es", "西班牙语"),
+    ("vi", "越南语"),
+    ("de", "德语"),
+    (LEARNING_LANGUAGE_OFF, "不显示"),
+];
+
 #[derive(Debug, thiserror::Error)]
 #[error("unknown language code: {0}")]
 pub struct UnknownLanguage(pub String);
@@ -92,5 +105,14 @@ mod tests {
         assert_eq!(Language::Japanese.code(), "ja");
         assert_eq!(Language::Vietnamese.code(), "vi");
         assert_eq!(Language::German.code(), "de");
+    }
+
+    #[test]
+    fn learning_languages_parse_except_off() {
+        let (off, rest) = LEARNING_LANGUAGES.split_last().unwrap();
+        assert_eq!(off.0, LEARNING_LANGUAGE_OFF);
+        for (code, _) in rest {
+            assert_eq!(code.parse::<Language>().unwrap().code(), *code);
+        }
     }
 }

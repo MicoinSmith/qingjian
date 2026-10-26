@@ -40,21 +40,24 @@ qingjian/
 │   ├── qingjian-core/          # composition / parser / correction / candidate / ranking / sentence / engine …（下面单列）
 │   ├── qingjian-dictionary/    # 词库加载与查询
 │   ├── qingjian-translate/     # 候选翻译 annotation
-│   ├── qingjian-learning/      # 用户词频、用户词、个人英文词、个人 n-gram、个人敲错表（user.tsv / user-words.tsv / user-english.tsv / user-ngram.tsv / user-typos.tsv）、输入日志（input-log.jsonl）、输入统计（usage.tsv）、词汇记录（user-vocab.tsv）
+│   ├── qingjian-learning/      # 用户词频、用户词、个人英文词、个人 n-gram、个人敲错表、候选降权（user.tsv / user-words.tsv / user-english.tsv / user-ngram.tsv / user-typos.tsv / user-demoted.tsv）、输入日志（input-log.jsonl）、输入统计（usage-hourly.tsv）、词汇记录（user-vocab.tsv）
 │   ├── qingjian-predict/       # 云联想：Predictor 的网络实现（OpenAI 兼容接口）
 │   ├── qingjian-lm/            # 整句转换的 bigram 语言模型：LanguageModel 的实现
 │   ├── qingjian-neural/        # 字级 Transformer 的本地推理（candle）：SentenceScorer 的实现，给整句前几条路径重打分
 │   ├── qingjian-format/        # .qj 数据容器：mmap 打开、零拷贝视图、写入器、可落盘的哈希索引（dictionary / lm 依赖它）
 │   ├── qingjian-render/        # 自绘渲染器：候选窗一帧 + 主题 → 位图，各平台贴图
+│   ├── bamboo-slip/            # 自绘 UI 引擎：场景树、布局、文字、动画、控件 → 位图；候选窗与设置程序共用
 │   ├── qingjian-update/        # 检查更新：读 releases.json、验 ed25519 签名、按平台与渠道挑新版本
 │   └── qingjian-platform/      # 平台层共用的部分：配置文件、协议类型
 │
 ├── apps/
 │   ├── cli/                    # 测试工具：查询、逐键计时、输入日志回放评测、整句评测
-│   ├── macos/                  # IMK 输入法壳（app / host / imk / candidates / menubar / preferences）
+│   ├── settings/               # 设置程序：三平台共用，画在 bamboo-slip 上，读写同一份配置
+│   ├── macos/                  # IMK 输入法壳（app / host / imk / candidates / menubar / preferences（旧版设置））
 │   ├── windows/                # 同一个产品的四个 package：server（IPC 分派 + Engine + 命名管道 + 自绘候选窗）、
-│   │                           #   tsf（TSF 文本服务 DLL：COM 链路 + 连 Server 的管道客户端）、settings（WinUI 3）、installer
-│   └── linux/                  # server（Engine + Unix socket）+ fcitx5（C++ 插件）+ scripts
+│   │                           #   tsf（TSF 文本服务 DLL：COM 链路 + 连 Server 的管道客户端）、settings（旧版设置，WinUI 3）、installer
+│   ├── linux/                  # server（Engine + Unix socket）+ fcitx5（C++ 插件）+ scripts
+│   └── android/                # core（Rust：Engine 装配 + JNI，cdylib）+ app（Kotlin InputMethodService 壳）；Engine 在输入法进程内
 │
 ├── tools/
 │   ├── dict-convert/           # 产品数据生成：lexicon / bigram / mine / english / emoji / pack
@@ -75,14 +78,15 @@ qingjian-core
 ├── parser          # 拼音切分（全拼 / 简拼 / 双拼 / 模糊音）
 ├── candidate       # 候选数据模型（Candidate / Translation / Sense / PartOfSpeech / Language）；layout 是分页排布（本地候选 + 云端固定槽位），各平台壳共用
 ├── ranking         # 候选排序
-├── shortcut        # 快捷候选：日期 / 时间 / 星期、v 表达式模式（四则运算、中文数字），不查词库
+├── shortcut        # 快捷候选：日期 / 时间 / 星期、v 表达式模式（四则运算、中文数字、中文日期），不查词库
 ├── english         # 英文模式候选：词表精确词 / 前缀补全 / 一处编辑纠正（edit.rs），大小写跟着敲的走
 ├── sentence        # 离线整句转换：词图 + bigram Viterbi + 束搜索，LanguageModel trait（qingjian-lm 实现，缺省退化为一元），UserNgram 个人 n-gram（二元 + 三元），Context 上文（前两个词），
 │               #   SentenceScorer trait（qingjian-neural 实现）：convert_paths 出前 K 条路径，Engine（engine/rescoring）按 路径分 + λ·(神经分 − 静态分) 重排，异步时后台线程打分、壳停顿后取
 ├── emoji           # emoji 候选：EmojiTable（词 → emoji，Unicode CLDR 中文 annotations）
 ├── fuzzy           # 模糊音：FuzzyRules（配置 [fuzzy]）把每个音节扩展成多种写法，Expanded 借出给词库多写法查询
-├── shuangpin       # 双拼：Scheme 七套方案的键位表，decode 把敲的键解成全拼（音节间带 '），Decoded 把上屏消耗换算回键数；切分之后全部复用全拼
+├── shuangpin       # 双拼：Scheme 九套方案的键位表，decode 把敲的键解成全拼（音节间带 '），Decoded 把上屏消耗换算回键数；切分之后全部复用全拼
 │                   # engine::ModeKeys（配置 [shortcut]）：表达式 / 问字前缀键，只能是 v / u / i；问字键后跟十六进制出码点字符
+├── nine_key        # 九宫格：数字串按边界切成若干形状，每个位置带同码的全部写法，交给词库多写法查询与整句词图；见 nine-key.md
 ├── engine          # 对外门面：Engine，以及 Translator / Learner trait 与空实现
 └── storage         # 小文件落盘原语：write_atomic（临时文件 + fsync + 改名）、read_text_lossy；学习 crate 与配置都用它
 ```
@@ -118,9 +122,9 @@ qingjian-core
 
 输入法进程随时会被 launchd 杀掉或自己崩掉，用户攒的学习数据和正在打的字都不能因此没了：
 
-- **原子写**（`qingjian_core::storage::write_atomic`）：学习 crate 的六张 TSV、输入统计 `usage.tsv`、词汇记录 `user-vocab.tsv`、`config.toml`、`.env` 都先写同目录的临时文件，
-  flush + fsync 后改名覆盖；任何时刻磁盘上要么是旧文件要么是新文件。输入日志 `input-log.jsonl` 是追加写不走这条路，
-  崩溃最多留半行，回放工具按行跳过坏行并计数。
+- **原子写**（`qingjian_core::storage::write_atomic`）：学习 crate 的六张 TSV、词汇记录 `user-vocab.tsv`、`config.toml`、`.env` 都先写同目录的临时文件，
+  flush + fsync 后改名覆盖；任何时刻磁盘上要么是旧文件要么是新文件。输入日志 `input-log.jsonl` 与输入统计 `usage-hourly.tsv`、`api-usage-hourly.tsv` 是追加写
+  （统计每次上屏 / 每个请求当场追加，不等定时落盘），崩溃最多留半行，读的一方按行跳过坏行；统计文件攒多了才整理成一个时段一行，整理走原子写。
 - **损坏容忍**：学习数据各文件按行解析，格式不对的行记一条警告跳过（下次落盘就清掉了），编码坏掉的字节按替换字符读进来；
   只有权限、坏盘这类真正的 io 错误才算读失败，这时壳退回只在内存里学习（不带路径，不会拿空表覆盖用户的文件），输入法照常启动。
 - **panic 隔离**：`define_class!` 生成的 IMK 回调是 ObjC 运行时直接调的，panic 穿出去进程就没了。壳在按键处理、
@@ -351,7 +355,7 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   `preedit/`（`mod.rs` / `segment.rs` / `style.rs`）是拼音行的分段模型（由 Core 的 `MarkedSegment` 转来），`frame.rs` 是一帧的数据；
   `menubar/`：`indicator.rs` 是菜单栏的中 / 英 NSStatusItem（输入源图标没法动态换，只能自己放一个），
   `menu.rs` / `action.rs` / `target.rs` 是输入法菜单；
-  `preferences/`：偏好设置窗口（`window.rs` 手排控件、`layout.rs` 逐页排版、`panel.rs` 关窗时切回激活策略、`setting/`（`Setting` 与 `SettingValue`）控件 ↔ 配置项、
+  `preferences/`：旧版偏好设置窗口（菜单「旧版设置…」，兜底用；`window.rs` 手排控件、`layout.rs` 逐页排版、`panel.rs` 关窗时切回激活策略、`setting/`（`Setting` 与 `SettingValue`）控件 ↔ 配置项、
   `target.rs` 一个 `changed:` 选择器、`key_recorder.rs` 快捷键录制按钮、`usage_page.rs` 「统计」页（数字格子与「几本《某书》」文案）、`about.rs` 「关于」页文案、`edit_menu.rs` 只有编辑项的主菜单、`file_dialog.rs` 导入词库的打开面板）；
   `app/`：`paths.rs` 定位 `.app/Contents/Resources/`（词库、随包领域词库 `dicts/`）与 `~/Library/Application Support/Qingjian/`（用户数据），
   `settings.rs` 是配置文件的运行时状态，`logging/` 只写 `~/Library/Logs/Qingjian/`（自己的 `LogFile` 按天分文件、留 7 天、被删重建），`bundle.rs` 读 Info.plist，
@@ -410,7 +414,7 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
 ### Windows：TSF
 
 - TSF DLL 会被加载进每一个应用进程，核心逻辑必须放在进程外。
-  采用 Weasel（WeaselServer）和水杉（Server 进程）相同的结构：DLL 只做 IPC，Rust Core 跑在独立进程里。
+  采用 Weasel（WeaselServer）相同的结构：DLL 只做 IPC，Rust Core 跑在独立进程里。
 - 使用 `windows` crate 的 COM `implement` 宏。
 - TSF 是公认最难的输入法 API，工时预期要按整个项目一半来估。
 
@@ -419,7 +423,14 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
 - **IPC 协议**：`qingjian-platform::protocol`，Server ↔ DLL 两端共用、全部 serde。`ClientMessage`（DLL → Server：
   开 / 关会话、按键、上屏、回上下文、回选区、报中英模式）与 `ServerMessage`（Server → DLL：按键结果、上屏结果、异步重绘、请求上下文、请求选区）；
   失焦 / 停用时 DLL 发 `Commit`，Server 回 `Committed { text }`（缓冲区原样交出，对应 macOS 的 `commitComposition`），
-  DLL 用最近收键记下的 `ITfContext` 经编辑会话落进文档；应用强行终止组句（`OnCompositionTerminated`）时拼音已被框架定成普通文本，
+  DLL 用最近收键记下的 `ITfContext` 经编辑会话落进文档。**「失焦」有两条路，都汇到 `TextService_Impl::set_focus`**：
+  线程内换文档走 `ITfKeyEventSink::OnSetFocus`，切到别的应用（命令行、终端这类抢焦点的窗口）走
+  `ITfThreadFocusSink::OnKillThreadFocus`——后者才是切窗口时真正触发的那条（`OnSetFocus` 不触发），
+  两边都得落定，否则拼音留在 Server 缓冲里，切回**同一个**应用时 Server 认作同一会话、`ensure_focus` 不清缓冲，
+  接着敲就接在旧拼音后面，候选窗口也一直挂着；
+  连接断开（应用被关 / 崩了，DLL 来不及发 `CloseSession`）时 `ipc::pump` 记下的、本连接开过的会话
+  由 Server 自己 `CloseSession` 掉，同一个循环线上的命名管道与测试里的内存流共用，收尾行为不会出现两份；
+  应用强行终止组句（`OnCompositionTerminated`）时拼音已被框架定成普通文本，
   DLL 只记「Server 缓冲过期」，下次说话前先 `Commit` 并丢掉交出的文本，不再插一次。
   中英模式：**Windows 与 macOS 机制不同**。macOS 用 Caps Lock 当中英切换键；Windows 按本地习惯，单击切换键在中 / 英间翻转，
   切换键由 `[shortcut] switch_mode` 勾选（`SwitchKeys`：单击 `shift`（缺省）/ 单击 `control` / `ctrl+alt+space`，可多选，空列表 = 不用键切），
@@ -471,10 +482,12 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   经典控制台的窗口属于 `conhost.exe`、Windows Terminal 是 `WindowsTerminal.exe`；
   Server 把按会话应用算好的「给不给英文候选」随 `InputSettings` 下发，不给时英文模式与 Caps 下没在组句的字母 DLL 在 `OnTestKeyDown` 就不吃、原样交给应用
   （吃了再由输入法插入的话，Photoshop 画布这类没有文本框的地方收不到 W / H / V 单键快捷键）；
-  `[shortcut]` 的修饰键 + 数字（译词上屏 / 删候选，`dispatch/key/shortcut.rs`）：配置里的 `Modifiers` 按 option→Alt、control→Ctrl、command→Win
+  `[shortcut]` 的修饰键 + 数字（译词上屏，`dispatch/key/shortcut.rs`）：配置里的 `Modifiers` 按 option→Alt、control→Ctrl、command→Win
   落到 `KeyModifiers`，Router 按键码认数字、去掉 Caps 位后与配置比；DLL 见 Ctrl / Alt / Win 仍一律放行，只有组句中的修饰键 + 数字送 Server 判，
-  没配到的 Router 回 Passthrough。删候选的那句反馈（「已删除…」/「没什么可删」）随下一帧的 `Frame::notice` 下发，自绘候选窗画在拼音行下方、
-  显示到下一次按键（`dispatch/key/shortcut.rs` 填、`handle_key` 开头清；对齐 macOS 画在拼音行右侧的短提示）。
+  没配到的 Router 回 Passthrough。候选右键菜单：UI 线程在候选窗收 `WM_RBUTTONUP`、认出是哪一格，经工人通道交 Router（`CandidateMouse::Menu`），
+  Router 按平台层 `candidate_menu::actions` 定菜单项再叫 UI 线程弹自绘菜单窗（`ui/candidates/menu.rs`，渲染器 `render_menu` 画、不抢焦点）；
+  点中的项（`CandidateMouse::MenuPick`）由 `dispatch/key/menu.rs` 做，那句反馈（「已降权…」「已删除…」）随下一帧的 `Frame::notice` 下发，
+  自绘候选窗画在拼音行下方、显示到下一次按键（`handle_key` 开头清，同时收起还开着的菜单；对齐 macOS 画在拼音行右侧的短提示）。
   **翻译选中文字**（`[shortcut] translate_selection`，缺省 Ctrl+Alt+T）：不在组句、云服务开着时按下它，Server 回 `RequestSelection`
   （替代那次按键的常规结果），DLL 起一个**异步只读编辑会话**（`com/edit/selection.rs`，`GetSelection` + `GetText` 读选中文本、上限 500 字、`GetTextExt` 量屏幕矩形）
   回 `Selection { text, rect }`；Server 走 Core 的 `request_translation`（`PredictionKind::Translate`，双向，译文走 `sentence`），
@@ -484,11 +497,11 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   协议不耦合 Core 内部枚举），候选直接嵌 `qingjian_core::CandidateList`。同词干类型收进子目录：`key/{event,outcome}`、`frame/preedit/{kind,segment}`。
 - **Server 进程**：`apps/windows/server`（package `qingjian-windows-server`，bin `qingjian-server`）。`dispatch::Router` 按 `SessionId` 分派多会话（Windows 一个 Server 服务多个应用进程，
   每会话各持组句状态，不同于 macOS 的进程级单例）。会话开 / 关、按键与上屏、Engine 装配、命名管道传输（`\\.\pipe\qingjian`）都已跑通，Windows 上端到端测过。
-- **候选窗口（Server 进程自绘 + uiAccess）**：候选窗从前在**应用进程内的 DLL** 自绘，普通置顶窗被微软商店 / 任务栏搜索这些**更高 z-band** 的宿主盖住。现改由 **Server 进程**自绘（`server/src/ui/`：一条专用 UI 线程注册窗口类 + 建 GDI 分层窗 + 跑消息循环，HWND 只在该线程碰；工人线程经 `Sender<UiCommand>` + `PostThreadMessageW(WM_APP)` 把「显示(`Frame`+屏幕矩形) / 隐藏」marshal 过去；进程级 `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` 按物理像素对齐应用报来的矩形）。DLL 只量光标屏幕矩形（`GetTextExt`，退鼠标）发 `PositionCandidates{rect}`，并在组句于 DLL 侧结束（应用终止组句 / 断线，`OnCompositionTerminated` 这条 Server 无从知晓）时发 `HideCandidates`；Server 握着 `Frame` 直接自绘，云端异步更新也直接刷自己的窗、不回传 DLL（渲染代码——词性 + 译文 + 分页 + 柔和阴影，对齐 macOS——整块从 DLL 搬到 Server）。**盖过高 z-band 宿主**靠 Server exe 的 `uiAccess="true"` manifest（`server/build.rs` 用 embed-manifest 嵌）+ 代码签名 + 装 Program Files 三者齐备（`SetWindowPos(HWND_TOPMOST)` 才自动升进 UIAccess 高带）：开发自签 + 本机受信任根（`installer/sign-local.ps1`），发版换 Certum 开源代码签名证书；uiAccess exe 不能 CreateProcess 拉起（报 740），装完 / 登录都走 ShellExecute（安装器完成页 `ShellExecAsOriginalUser` + `{commonstartup}` 启动快捷方式由 Explorer 拉起才授 uiAccess，故不用计划任务）。候选窗每显示一页，Server 调 `Engine::note_displayed`（收窗传空）告知当前页——生词「看到轮次」据此推进、橙色标记满 `FRESH_UNTIL` 轮才毕业，对齐 macOS 壳的 `render`。
+- **候选窗口（Server 进程自绘 + uiAccess）**：候选窗从前在**应用进程内的 DLL** 自绘，普通置顶窗被微软商店 / 任务栏搜索这些**更高 z-band** 的宿主盖住。现改由 **Server 进程**自绘（`server/src/ui/`：一条专用 UI 线程注册窗口类 + 建 GDI 分层窗 + 跑消息循环，HWND 只在该线程碰；工人线程经 `Sender<UiCommand>` + `PostThreadMessageW(WM_APP)` 把「显示(`Frame`+屏幕矩形) / 隐藏」marshal 过去；进程级 `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` 按物理像素对齐应用报来的矩形）。DLL 只量光标屏幕矩形（`GetTextExt`，退鼠标）发 `PositionCandidates{rect}`，并在组句于 DLL 侧结束（应用终止组句 / 断线，`OnCompositionTerminated` 这条 Server 无从知晓）时发 `HideCandidates`；Server 握着 `Frame` 直接自绘，云端异步更新也直接刷自己的窗、不回传 DLL（渲染代码——词性 + 译文 + 分页 + 柔和阴影，对齐 macOS——整块从 DLL 搬到 Server）。**盖过高 z-band 宿主**靠 Server exe 的 `uiAccess="true"` manifest（`server/build.rs` 用 embed-manifest 嵌）+ 代码签名 + 装 Program Files 三者齐备（`SetWindowPos(HWND_TOPMOST)` 才自动升进 UIAccess 高带）：开发自签 + 本机受信任根（`installer/sign-local.ps1`），发版换 Certum 开源代码签名证书；uiAccess exe 不能 CreateProcess 拉起（报 740），装完 / 登录都走 ShellExecute（安装器完成页 `ShellExecAsOriginalUser` + `{commonstartup}` 启动快捷方式由 Explorer 拉起才授 uiAccess，故不用计划任务）。搜索页可能在候选窗创建后弹出并排到它前面，因此每次显示候选都用 `SetWindowPos(HWND_TOPMOST)` 重新升到当前置顶序列首位，并带 `SWP_NOACTIVATE` 保留应用焦点。候选窗每显示一页，Server 调 `Engine::note_displayed`（收窗传空）告知当前页——生词「看到轮次」据此推进、橙色标记满 `FRESH_UNTIL` 轮才毕业，对齐 macOS 壳的 `render`。
   候选窗只在候选与译词的点击区域收鼠标（`WM_NCHITTEST` 回 `HTCLIENT`，其余 `HTTRANSPARENT` 穿透，`MA_NOACTIVATE` 不抢焦点，`ui/candidates/click.rs`）；
   点中的目标经工人通道交给 Router（`dispatch/key/click.rs`，与数字键 / 译词键同一套上屏），Server 写不了文档，上屏的字挂在焦点会话上，
   DLL 下一拍 `Poll` 随 `Update.commit` 取走、开编辑会话写进去（协议 v8 起；更老的 DLL 不收点击），赶在轮询前来的键把它接在结果前面。
-- **悬浮状态条（Server 进程自绘，可拖动 / 记位置）**：桌面上常驻的小浮窗，显示当前中 / 英（开着双拼时附方案名），与任务栏的中 / 英指示器（语言栏按钮）并存。跟候选窗**同一条 UI 线程**、复用同一套分层窗口合成器（`server/src/ui/layered/`：圆角背景 + 四周柔和阴影，从候选窗的 `surface.rs` 抽出来两边共用）与主题（字体 / 配色 / DPI / 深浅）；自己一个窗口类与窗口过程（`server/src/ui/status/`）：三格 `[中 / 英][，。/ ,.][⚙]`：按下鼠标先 `DragDetect`，挪出阈值就交给系统移动循环（`WM_NCLBUTTONDOWN` + `HTCAPTION`，结束时 `WM_EXITSIZEMOVE` 报新位置），没挪就是点击、按 x 落进哪格；`WM_MOUSEACTIVATE` 回 `MA_NOACTIVATE` 点它不抢应用焦点；窗口过程按 HWND 从 thread_local 表查到对象。点格 / 拖动结束经 `StatusEvent`（`dispatch/status/`）投回工人线程（工人循环收的是 `ipc::Work`：DLL 消息或状态条事件），Router 写回配置（`[status_bar] x/y`、`[general] full_width_punctuation`，热加载再读回）；齿轮由 UI 线程直接起设置程序。中英模式全局一份、存在 Server（见上文「中英模式」）：DLL 里用户切了用 `ModeChanged` 报来，状态条上点「中 / 英」直接改 Server 那份，各 DLL 激活、得到焦点时和轮询定时器（没组句、本线程前台时每几拍）用 `SyncMode` 取走跟上；有 DLL 来取模式就说明青简是当前输入法，状态条据此显示。会话号用线程 id（`com::session_id`）——TSF 的 client id 各进程都是同样那几个值，拿它当会话号会撞。前台线程没连着 Server 时（登录后 Server 起得比第一个应用晚、Server 重启过）轮询那一拍顺带补连，连上报一次当前模式（重启过的 Server 不知道）。状态条**常驻桌面**，只跟「当前输入法是不是青简」走：第一次 `ModeChanged` 显示，DLL 挂 `ITfActiveLanguageProfileNotifySink`（`com/profile.rs`）在别的 TIP 被激活时用一条临时连接发 `ImeSwitched` 收起（此时自己已被停用、会话连接已关），应用退出（`CloseSession`）不收。双拼方案 Server 从自己的 `[general] shuangpin` 配置知道，不必带。开关与记住的位置在 `[status_bar]`（`enabled` / `x` / `y`），热加载即时生效；uiAccess 高 z-band 与候选窗同进程天然继承。参考微软水杉的 FTB 形态（`~/Desktop/MSIME-Windows`，它用 D2D + DirectComposition 且不记位置），落地时选沿用本项目已有的 GDI 分层窗那套以保持视觉语言一致、并加了位置持久化。
+- **悬浮状态条（Server 进程自绘，可拖动 / 记位置）**：桌面上常驻的小浮窗，显示当前中 / 英（开着双拼时附方案名），与任务栏的中 / 英指示器（语言栏按钮）并存。跟候选窗**同一条 UI 线程**、复用同一套分层窗口合成器（`server/src/ui/layered/`：圆角背景 + 四周柔和阴影，从候选窗的 `surface.rs` 抽出来两边共用）与主题（字体 / 配色 / DPI / 深浅）；自己一个窗口类与窗口过程（`server/src/ui/status/`）：三格 `[中 / 英][，。/ ,.][⚙]`：按下鼠标先 `DragDetect`，挪出阈值就交给系统移动循环（`WM_NCLBUTTONDOWN` + `HTCAPTION`，结束时 `WM_EXITSIZEMOVE` 报新位置），没挪就是点击、按 x 落进哪格；`WM_MOUSEACTIVATE` 回 `MA_NOACTIVATE` 点它不抢应用焦点；窗口过程按 HWND 从 thread_local 表查到对象。点格 / 拖动结束经 `StatusEvent`（`dispatch/status/`）投回工人线程（工人循环收的是 `ipc::Work`：DLL 消息或状态条事件），Router 写回配置（`[status_bar] x/y`、`[general] full_width_punctuation`，热加载再读回）；齿轮由 UI 线程直接起设置程序。中英模式全局一份、存在 Server（见上文「中英模式」）：DLL 里用户切了用 `ModeChanged` 报来，状态条上点「中 / 英」直接改 Server 那份，各 DLL 激活、得到焦点时和轮询定时器（没组句、本线程前台时每几拍）用 `SyncMode` 取走跟上；有 DLL 来取模式就说明青简是当前输入法，状态条据此显示。会话号用线程 id（`com::session_id`）——TSF 的 client id 各进程都是同样那几个值，拿它当会话号会撞。前台线程没连着 Server 时（登录后 Server 起得比第一个应用晚、Server 重启过）轮询那一拍顺带补连，连上报一次当前模式（重启过的 Server 不知道）。状态条**常驻桌面**，只跟「当前输入法是不是青简」走：第一次 `ModeChanged` 显示，DLL 挂 `ITfInputProcessorProfileActivationSink`（`com/profile.rs`）在别的 TIP 或键盘布局被激活时用一条临时连接发 `ImeSwitched` 收起（`ITfActiveLanguageProfileNotifySink` 跨语言切到纯键盘布局不报，所以不用它）（此时自己已被停用、会话连接已关），应用退出（`CloseSession`）不收。双拼方案 Server 从自己的 `[general] shuangpin` 配置知道，不必带。开关与记住的位置在 `[status_bar]`（`enabled` / `x` / `y`），热加载即时生效；uiAccess 高 z-band 与候选窗同进程天然继承。画法沿用本项目已有的 GDI 分层窗那套，保持视觉语言一致，并记住位置。
 - **帧编解码**：长度前缀 JSON 帧的 `read_message` / `write_message` 与缺省管道名放在 `qingjian-platform::protocol`，Server 与 DLL 共用（DLL 不必依赖整个 Server 库）。
 - **TSF DLL**：`apps/windows/tsf`（package `qingjian-windows-tsf`，`cdylib`，产物 `qingjian_tsf.dll`，依赖官方 `windows` crate 的 COM `implement` 宏）。「引擎层」不是 Engine 而是连 Server 的**管道客户端** `EngineClient`（平台无关、可端到端测）；
   连不上 Server 时 DLL 自己把它拉起来（`com/service/launch.rs`）：Server 只在登录时由「启动」文件夹的快捷方式拉起，中途挂了以前只能等下次登录、期间静默吞键。

@@ -1,6 +1,6 @@
 //! 文本服务对象 [`TextService`]：每线程一个，实现 `ITfTextInputProcessor`（激活 / 停用，[`processor`]）、
 //! `ITfKeyEventSink`（收键，[`key_sink`]）与显示属性提供者（[`display`]）。
-//! 连 Server 在 [`connection`]，中英模式在 [`mode`]，往文档写字在 [`document`]。
+//! 连 Server 在 [`connection`]，中英模式在 [`mode`]，往文档写字在 [`document`]，符号面板的开关状态在 [`panel`]。
 
 mod connection;
 mod display;
@@ -10,6 +10,7 @@ mod launch;
 mod menu;
 mod mode;
 mod next;
+mod panel;
 mod processor;
 mod punctuation;
 
@@ -93,6 +94,9 @@ pub struct TextService {
     /// 已登记的标点切换保留键。
     punctuation_combo: Cell<Option<KeyCombo>>,
 
+    /// 已成功登记的手动 AI 保留键；设置未变时也可补登记。
+    predict_combo: Cell<Option<KeyCombo>>,
+
     /// 上一次应用过的按键行为设置；与 Server 下发的一致时就不重复应用
     /// （每一拍 `SyncMode` 都带着它，见 [`TextService_Impl::apply_input_settings`]）。
     input_settings: Cell<Option<InputSettings>>,
@@ -147,9 +151,9 @@ pub(super) fn on_keyboard_open_changed() {
     with_active(TextService_Impl::sync_from_keyboard_open);
 }
 
-/// 本线程得到 / 失去了键盘焦点（见 [`super::focus`]）。
+/// 本线程得到 / 失去了键盘焦点（见 [`super::focus`]）。失去时落定组句（[`TextService_Impl::set_focus`]）。
 pub(super) fn on_thread_focus(foreground: bool) {
-    with_active(|service| service.set_thread_focus(foreground));
+    with_active(|service| service.set_focus(foreground));
 }
 
 /// 轮询发现前台会话没连着 Server（见 [`super::poll`]）：补连一次。
@@ -171,7 +175,7 @@ pub(super) fn on_input_settings(input: InputSettings) {
 
 /// 轮询取回了右键菜单打勾用的开关状态。
 pub(super) fn on_indicator_state(state: IndicatorState) {
-    with_active(|service| service.indicator_state.set(state));
+    with_active(|service| service.apply_indicator_state(state));
 }
 
 impl TextService {
@@ -195,6 +199,7 @@ impl TextService {
             translate_combo: Cell::new(None),
             switch_preserved: Cell::new(false),
             punctuation_combo: Cell::new(None),
+            predict_combo: Cell::new(None),
             input_settings: Cell::new(None),
             indicator_state: Cell::new(IndicatorState::default()),
             conversion_guard_until: Cell::new(None),

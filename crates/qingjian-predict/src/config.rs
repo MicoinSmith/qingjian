@@ -1,7 +1,7 @@
 use qingjian_core::PredictionPolicy;
 use serde::{Deserialize, Serialize};
 
-/// 云联想配置。默认**关闭**，开启后光标附近的文本会发往 `base_url`。
+/// 网络预测与整句候选翻译共用的服务配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PredictConfig {
@@ -44,6 +44,12 @@ pub struct PredictConfig {
     /// 组句中要不要整句补全。
     pub sentence: bool,
 
+    /// 给本地整句候选自动请求译文，并显示在候选右侧。
+    pub sentence_translation: bool,
+
+    /// 上屏的整句翻成学习语言，记进生词本的时间线（只发那一句）。
+    pub vocabulary_translation: bool,
+
     /// 推理强度，随请求发 `reasoning_effort`：`none` 关掉模型的思考（联想要的是快，不是想），
     /// 其余 minimal / low / medium / high / xhigh 照传；留空则不发（给不认这个参数的接口）。
     /// DeepSeek V4 这类默认带思考的模型不关会把 token 预算全花在思考上，正文为空。
@@ -66,6 +72,8 @@ impl Default for PredictConfig {
             lookahead: 32,
             slots: 2,
             sentence: true,
+            sentence_translation: false,
+            vocabulary_translation: true,
             reasoning_effort: "none".to_owned(),
         }
     }

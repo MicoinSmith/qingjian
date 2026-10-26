@@ -59,6 +59,10 @@ EMOJI_GROUPS = {
     "Flags": "旗帜",
 }
 
+# 网络：敲网址、邮箱用的整段，符号库里没有，写死在这里，排在英文标点后面
+NETWORK = [".", "/", "@", "-", "_", ":", ".com", ".cn", ".net", ".org", ".com.cn", ".edu",
+           "www.", "http://", "https://", "ftp://", "news.", "?", "=", "&", "#", "%", "~", "+"]
+
 COMMON_EXCLUDED = {"06", "09", "10", "11", "12", "18", "19"}
 
 SKIN_TONES = set(range(0x1F3FB, 0x1F400))
@@ -161,6 +165,8 @@ def main() -> None:
         seen = set()
         items = [i for i in items if not (i in seen or seen.add(i))]
         sections.append(("符号", title, items))
+        if stem == "02_英文标点":
+            sections.append(("符号", "网络", NETWORK))
 
     sections.append(("表情", "常用", [r["表情"] for r in common_emoji]))
     sections.append(("表情", "颜文字", [r["表情"] for r in kaomoji]))
